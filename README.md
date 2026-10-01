@@ -4,6 +4,8 @@ Cada ponto é um estabelecimento com CNPJ ativo, posto no seu endereço do Censo
 
 **https://rafapolo.github.io/brasilumen/** · link direto para um estado: `#sp`, `#rj`, `#ba`…
 
+![São Paulo no brasilumen](screenshot.webp)
+
 ## Dados
 
 - Estabelecimentos ativos do cadastro de CNPJ da Receita Federal.
