@@ -47,6 +47,9 @@ button { font: inherit; color: inherit; }
   left: var(--gutter);
   z-index: 10;
   max-width: min(440px, calc(100vw - 2 * var(--gutter)));
+  padding: 14px 16px;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 6px;
   pointer-events: none;
 }
 
@@ -259,11 +262,21 @@ button { font: inherit; color: inherit; }
   right: var(--gutter);
   z-index: 10;
   display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  width: 230px;
+}
+
+.chips {
+  display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 6px;
-  max-width: 280px;
 }
+
+/* luz only matters on phones, where the sliders fold away. */
+#light-toggle { display: none; }
 
 .chip {
   height: 28px;
@@ -284,17 +297,14 @@ button { font: inherit; color: inherit; }
 
 .light-panel {
   width: 100%;
-  padding: 14px;
-  background: var(--glass);
-  border: 1px solid var(--hair);
-  border-radius: 4px;
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  padding: 12px 14px 10px;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 6px;
 }
 
 .knob {
   display: block;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .knob span {
@@ -313,43 +323,14 @@ button { font: inherit; color: inherit; }
   accent-color: rgb(var(--ember-raw));
 }
 
-/* A knob the user has taken over stops following the zoom. */
-.knob.manual output::after {
-  content: " · manual";
-  color: var(--ember);
-}
-
 .light-foot {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+  text-align: right;
   font-family: var(--mono);
   font-size: 10px;
   color: var(--dim);
 }
 
 .light-foot output { color: var(--lamp); font-variant-numeric: tabular-nums; }
-
-.link {
-  padding: 0;
-  border: 0;
-  background: none;
-  font-family: var(--mono);
-  font-size: 10px;
-  color: var(--ember);
-  cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-
-.link:disabled { color: var(--dim); text-decoration: none; cursor: default; }
-
-.hint {
-  margin: 10px 0 0;
-  font-size: 12px;
-  line-height: 1.4;
-  color: var(--dim);
-}
 
 /* ---------- about ---------- */
 
@@ -427,9 +408,11 @@ button { font: inherit; color: inherit; }
   .dek { display: none; }
   .readout { margin-top: 10px; }
 
-  .light { top: auto; bottom: var(--gutter); right: var(--gutter); flex-direction: column-reverse; align-items: flex-end; max-width: calc(100vw - 2 * var(--gutter)); }
-  .light-panel { width: min(280px, calc(100vw - 2 * var(--gutter))); }
-  #about-open { order: -1; }
+  .light { top: auto; bottom: var(--gutter); width: auto; max-width: calc(100vw - 2 * var(--gutter)); }
+  .chips { flex-direction: column; align-items: flex-end; }
+  #light-toggle { display: block; }
+  .light-panel { display: none; width: min(240px, calc(100vw - 2 * var(--gutter))); }
+  .light-panel.open { display: block; }
 
   .picker-toggle {
     display: block;

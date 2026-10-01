@@ -14,8 +14,8 @@
 
   // Zoom-driven dot geometry. With radiusUnits:"pixels" a dot keeps its screen
   // size while points spread 2x per zoom level, so one fixed tuning only looks
-  // right at one zoom. t=0 is the fitted view of the current place (dense glow,
-  // the kepler-matched defaults); t=1 is max zoom (each dot a visible lamp).
+  // right at one zoom. t=0 is the place's minZoom (dense glow, the
+  // kepler-matched defaults); t=1 is max zoom (each dot a visible lamp).
   // radius is linear in t; alpha is geometric, because additive light is read
   // as ratios. brilho (the float gain) stays fixed as a stable reference.
   var ZOOM_AUTO = { radius: [1.0, 1.25], alpha: [0.8, 1.0] };
@@ -59,9 +59,7 @@
   var overlay = null;
   var current = null;      // uf whose points are on screen
   var requested = null;    // uf the user last asked for
-  var zFit = 4;            // fitted zoom of the current place, t=0 of the curve
   var tilted = true;
-  var manual = { opacity: false, brightness: false, dotsize: false };
   var fade = 1;            // 0..1 ramp applied to the gain when points arrive
 
   // Decoded point sets, so going back to a state is instant. Keeps the few
@@ -162,13 +160,29 @@
     $(name + "-out").textContent = (+v).toFixed(2);
   }
 
-  function apply() {
+  // The sliders are ABSOLUTE readouts-and-controls, not trims: the zoom curve
+  // writes the computed value straight into opacidade's and tamanho's `value`,
+  // so those knobs slide on their own as you zoom and their position *is* the
+  // current value. brilho is set once to BRILHO_FIXED and never moves on zoom.
+  //
+  // Dragging a slider overrides that value until the next zoom, which
+  // re-asserts the curve — the cost of having the knobs track the zoom.
+  //
+  // t is normalized per place over the map's own interactive zoom range,
+  // [minZoom, maxZoom], because BR fits at ~zoom 3.7 while a small state fits
+  // above 8, so the same absolute zoom is a very different altitude.
+  //
+  // fromZoom: recompute from the curve and push the values into the sliders.
+  // Otherwise the user just dragged one, so read the sliders as-is.
+  function apply(fromZoom) {
     if (!map) return;
     var z = map.getZoom();
-    var t = clamp((z - zFit) / Math.max(MAX_ZOOM - zFit, 1e-9), 0, 1);
-    if (!manual.opacity) setKnob("opacity", lerpGeom(ZOOM_AUTO.alpha, t));
-    if (!manual.dotsize) setKnob("dotsize", lerpLinear(ZOOM_AUTO.radius, t));
-    if (!manual.brightness) setKnob("brightness", BRILHO_FIXED);
+    if (fromZoom) {
+      var zMin = map.getMinZoom(), zMax = map.getMaxZoom();
+      var t = clamp((z - zMin) / Math.max(zMax - zMin, 1e-9), 0, 1);
+      setKnob("opacity", lerpGeom(ZOOM_AUTO.alpha, t));
+      setKnob("dotsize", lerpLinear(ZOOM_AUTO.radius, t));
+    }
     $("zoomval").textContent = z.toFixed(2);
 
     var data = current && cache.get(current);
@@ -183,22 +197,31 @@
     });
   }
 
+  // "zoom" fires many times per second during a wheel/pinch — coalesce to at
+  // most one rebuild per animation frame.
   var frame = 0;
-  function schedule() {
+  var pendingZoom = false;
+  function schedule(fromZoom) {
+    if (fromZoom === true) pendingZoom = true;
     if (frame) return;
-    frame = requestAnimationFrame(function () { frame = 0; apply(); });
+    frame = requestAnimationFrame(function () {
+      frame = 0;
+      var wasZoom = pendingZoom;
+      pendingZoom = false;
+      apply(wasZoom);
+    });
   }
 
   // The lights come on: ramp the gain from 0 when a new point set lands.
   function lightUp() {
-    if (reduceMotion) { fade = 1; schedule(); return; }
+    if (reduceMotion) { fade = 1; schedule(false); return; }
     var start = performance.now();
     var DURATION = 1400;
     fade = 0;
     (function step(now) {
       var k = clamp((now - start) / DURATION, 0, 1);
       fade = k * k * (3 - 2 * k);
-      apply();
+      apply(false);
       if (k < 1) requestAnimationFrame(step);
     })(start);
   }
@@ -228,9 +251,24 @@
     return cam;
   }
 
+  // minZoom caps how far the user can zoom OUT, and is the bottom (t=0) of the
+  // zoom curve. Same rule as the per-state pages had: 8, unless the place needs
+  // less to fit (BR fits at ~3.7). Lowered first so the flight is not clamped,
+  // then settled once the camera arrives.
+  var settleMinZoom = null;
+
   function fly(uf) {
     var cam = cameraFor(uf);
-    zFit = cam.zoom;
+    var target = Math.min(8, cam.zoom);
+    map.setMinZoom(Math.min(map.getMinZoom(), target, map.getZoom()));
+    if (settleMinZoom) map.off("moveend", settleMinZoom);
+    settleMinZoom = function () {
+      map.off("moveend", settleMinZoom);
+      settleMinZoom = null;
+      map.setMinZoom(target);
+      schedule(true);
+    };
+    map.once("moveend", settleMinZoom);
     var opts = { center: cam.center, zoom: cam.zoom, pitch: tilted ? TILT : 0, bearing: 0 };
     if (reduceMotion) map.jumpTo(opts);
     else map.flyTo(Object.assign(opts, { duration: 2200, essential: true }));
@@ -275,7 +313,7 @@
         if (requested !== uf) return;
         hideProgress();
         current = uf;
-        if (cached) schedule(); else lightUp();
+        if (cached) schedule(true); else lightUp();
       })
       .catch(function (err) {
         if (requested !== uf) return;
@@ -361,28 +399,16 @@
     });
 
     $("light-toggle").addEventListener("click", function () {
-      var panel = $("light-panel");
-      panel.hidden = !panel.hidden;
-      this.setAttribute("aria-expanded", panel.hidden ? "false" : "true");
+      var open = $("light-panel").classList.toggle("open");
+      this.setAttribute("aria-expanded", open ? "true" : "false");
     });
 
+    setKnob("brightness", BRILHO_FIXED);
     knobs.forEach(function (name) {
       $(name).addEventListener("input", function () {
-        manual[name] = true;
-        $(name).closest(".knob").classList.add("manual");
         $(name + "-out").textContent = (+this.value).toFixed(2);
-        $("auto").disabled = false;
-        schedule();
+        schedule(false);
       });
-    });
-
-    $("auto").addEventListener("click", function () {
-      knobs.forEach(function (name) {
-        manual[name] = false;
-        $(name).closest(".knob").classList.remove("manual");
-      });
-      this.disabled = true;
-      schedule();
     });
 
     $("tilt").addEventListener("click", function () {
@@ -397,7 +423,7 @@
     document.addEventListener("keydown", function (e) {
       if (e.key === "Escape") {
         closePicker();
-        $("light-panel").hidden = true;
+        $("light-panel").classList.remove("open");
         $("light-toggle").setAttribute("aria-expanded", "false");
       }
     });
@@ -440,7 +466,7 @@
         map.on("load", function () {
           overlay = new deck.MapboxOverlay({ interleaved: false, layers: [] });
           map.addControl(overlay);
-          map.on("zoom", schedule);
+          map.on("zoom", function () { schedule(true); });
           select(fromHash());
         });
       })
