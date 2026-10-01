@@ -484,62 +484,63 @@
   // zoom curve. Same rule as the per-state pages had: 8, unless the place needs
   // less to fit (BR fits at ~3.7). Lowered first so the flight is not clamped,
   // then settled once the camera arrives.
-  var settleMinZoom = null;
   var flight = 0;
 
-  function easeInOutSine(t) { return -(Math.cos(Math.PI * t) - 1) / 2; }
+  function easeInOutCubic(t) { return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; }
   // Ends a touch past 1 and comes back: the camera lands, then seats.
   function easeOutSeat(t) { var u = t - 1; return 1 + 2.2 * u * u * u + 1.2 * u * u; }
 
+  // Flies to the place and resolves when the camera has arrived, or when the
+  // flight was cut short (by the user, or by another fly()).
   function fly(uf) {
     var cam = cameraFor(uf);
     var target = Math.min(8, cam.zoom);
     var id = ++flight;
-    map.setMinZoom(Math.min(map.getMinZoom(), target, map.getZoom(), cam.zoom - 0.4));
-    if (settleMinZoom) map.off("moveend", settleMinZoom);
-    settleMinZoom = function () {
-      settleMinZoom = null;
-      map.setMinZoom(target);
-      schedule(true);
-    };
     var end = { center: cam.center, zoom: cam.zoom, pitch: tilted ? TILT : 0, bearing: 0 };
-    if (reduceMotion) {
-      map.once("moveend", settleMinZoom);
-      map.jumpTo(end);
-      return;
-    }
+    // The arc between two places climbs well above both; minZoom would clip
+    // it into a fast low pan, so open it all the way for the flight.
+    map.setMinZoom(Math.min(map.getMinZoom(), 2));
 
-    // Lean into the direction of travel, arrive a little short and unrotated
-    // only at the very end, the way a hand would swing the map over.
-    var from = map.getCenter();
-    var to = maplibregl.LngLat.convert(cam.center);
-    var dist = Math.hypot(to.lng - from.lng, to.lat - from.lat);
-    var lean = Math.max(-9, Math.min(9, (to.lng - from.lng) * 0.6));
-    if (dist < 0.05) lean = 0;
+    return new Promise(function (resolve) {
+      // Never clamp below where the camera is: a flight cut short mid-arc
+      // would otherwise snap.
+      function settle() {
+        map.setMinZoom(Math.min(target, map.getZoom()));
+        schedule(true);
+        resolve();
+      }
+      function arrived() {
+        var at = map.getCenter(), to = maplibregl.LngLat.convert(end.center);
+        return Math.abs(at.lng - to.lng) < 0.01 && Math.abs(at.lat - to.lat) < 0.01;
+      }
 
-    map.once("moveend", function () {
-      if (id !== flight) return;
-      // Interrupted by a drag or wheel: leave the camera where the user took it.
-      var at = map.getCenter();
-      if (Math.hypot(at.lng - to.lng, at.lat - to.lat) > 0.01) {
-        if (settleMinZoom) settleMinZoom();
+      if (reduceMotion) {
+        map.jumpTo(end);
+        settle();
         return;
       }
-      map.once("moveend", function () {
-        if (id === flight && settleMinZoom) settleMinZoom();
+
+      // Arrive a little high, then sink into the frame.
+      // flyTo stops any running flight, which fires that flight's moveend
+      // synchronously: listen only after it has started.
+      map.flyTo({
+        center: end.center,
+        zoom: cam.zoom - 0.3,
+        pitch: end.pitch,
+        bearing: 0,
+        speed: 1.2,
+        curve: 1.2,
+        maxDuration: 2800,
+        easing: easeInOutCubic,
+        essential: true,
       });
-      map.easeTo(Object.assign({}, end, { duration: 750, easing: easeOutSeat, essential: true }));
-    });
-    map.flyTo({
-      center: end.center,
-      zoom: cam.zoom - 0.35,
-      pitch: end.pitch,
-      bearing: lean,
-      speed: 1.1,
-      curve: 1.3,
-      maxDuration: 3200,
-      easing: easeInOutSine,
-      essential: true,
+      map.once("moveend", function () {
+        if (id !== flight || !arrived()) { if (id === flight) settle(); else resolve(); return; }
+        map.easeTo(Object.assign({}, end, { duration: 700, easing: easeOutSeat, essential: true }));
+        map.once("moveend", function () {
+          if (id === flight) settle(); else resolve();
+        });
+      });
     });
   }
 
@@ -572,18 +573,26 @@
     setReadout(uf);
     var hash = uf === "BR" ? "" : "#" + uf.toLowerCase();
     if (location.hash !== hash) history.replaceState(null, "", hash || location.pathname + location.search);
-    fly(uf);
+    // Fly over the whole-country sample, so the path between two states is
+    // lit instead of black; the place's own points light up on arrival.
+    if (current && current !== "BR" && current !== uf && cache.has("BR")) {
+      current = "BR";
+      apply(false);
+    }
+    var landing = fly(uf);
 
     var label = "acendendo " + (uf === "BR" ? "o Brasil" : uf);
     var cached = cache.has(uf);
     if (!cached) showProgress(label, 0);
-    loadPoints(uf, function (f) { if (requested === uf) showProgress(label, f); })
+    var loading = loadPoints(uf, function (f) { if (requested === uf) showProgress(label, f); })
+      .then(function (data) { if (requested === uf) hideProgress(); return data; });
+    Promise.all([loading, landing])
       .then(function () {
         if (requested !== uf) return;
-        hideProgress();
+        var changed = current !== uf;
         current = uf;
         apply(true);
-        if (!cached) lightUp();
+        if (changed && uf !== "BR") lightUp();
       })
       .catch(function (err) {
         if (requested !== uf) return;
