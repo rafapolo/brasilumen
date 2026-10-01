@@ -400,6 +400,22 @@ button { font: inherit; color: inherit; }
   line-height: 1.6;
 }
 
+/* ---------- credit ---------- */
+
+.credit {
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+  z-index: 10;
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--dim);
+  text-decoration: none;
+  opacity: 0.7;
+}
+
+.credit:hover { color: var(--lamp); opacity: 1; }
+
 /* ---------- phones ---------- */
 
 @media (max-width: 640px) {
@@ -408,7 +424,7 @@ button { font: inherit; color: inherit; }
   .dek { display: none; }
   .readout { margin-top: 10px; }
 
-  .light { top: auto; bottom: var(--gutter); width: auto; max-width: calc(100vw - 2 * var(--gutter)); }
+  .light { top: auto; bottom: calc(var(--gutter) + 14px); width: auto; max-width: calc(100vw - 2 * var(--gutter)); }
   .chips { flex-direction: column; align-items: flex-end; }
   #light-toggle { display: block; }
   .light-panel { display: none; width: min(240px, calc(100vw - 2 * var(--gutter))); }
