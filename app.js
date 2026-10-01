@@ -12,13 +12,38 @@
   var TILT_ZOOM_OUT = 0.45;
   var MAX_ZOOM = 15;
 
-  // Zoom-driven dot geometry. A dot keeps its screen size while points spread 2x per zoom level, so one fixed tuning only looks
-  // right at one zoom. t=0 is the place's minZoom (dense glow, the
-  // kepler-matched defaults); t=1 is max zoom (each dot a visible lamp).
-  // radius is linear in t; alpha is geometric, because additive light is read
-  // as ratios. brilho (the float gain) stays fixed as a stable reference.
-  var ZOOM_AUTO = { radius: [1.0, 1.25], alpha: [0.8, 1.0] };
-  var BRILHO_FIXED = 1.25;
+  // Zoom-driven light. A dot keeps its screen size while the points spread 2x
+  // per zoom level, so how many dots pile onto one pixel, and therefore how
+  // fast additive light burns to white, depends on the ABSOLUTE zoom, the same
+  // over any city in any state. Keyframes tuned by eye on RJ (dense metro plus
+  // sparse interior):
+  //
+  //   zoom   light   tamanho   what it should look like
+  //   <= 3   0.08    0.60      the whole country (only BR zooms out this far):
+  //                            bright coast, the interior a sprinkle of towns
+  //      6   0.25    0.60      whole state: cities white, the interior a warm
+  //                            sprinkle (lower light loses the small towns)
+  //      8   0.06    0.50      from an airplane: hot cores, warm halos; any
+  //                            more light and the metro burns into a blob
+  //     10   0.20    0.40      the street grid shows through the glow
+  //     13   2.00    0.35      each establishment a sharp street-lamp pinpoint
+  //     15   2.50    0.35      same, isolated lamps
+  //
+  // light = opacidade * brilho, the per-dot alpha before additive blending.
+  // Light is not monotonic: past the state view it dips so dense metros keep
+  // their gradient, then climbs back as the dots separate. It is interpolated
+  // geometrically (light is read as ratios, and density falls 4x per zoom
+  // level); tamanho linearly, shrinking as you descend so
+  // dots stay crisp instead of merging. Above 1 the light spills from
+  // opacidade (capped at 1) into brilho.
+  var ZOOM_KEYS = [
+    { z: 3, light: 0.08, size: 0.6 },
+    { z: 6, light: 0.25, size: 0.6 },
+    { z: 8, light: 0.06, size: 0.5 },
+    { z: 10, light: 0.2, size: 0.4 },
+    { z: 13, light: 2.0, size: 0.35 },
+    { z: 15, light: 2.5, size: 0.35 },
+  ];
 
   var NAMES = {
     BR: "Brasil", AC: "Acre", AL: "Alagoas", AP: "Amapá", AM: "Amazonas", BA: "Bahia",
@@ -47,8 +72,23 @@
   var $ = function (id) { return document.getElementById(id); };
 
   function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
-  function lerpLinear(r, t) { return r[0] + (r[1] - r[0]) * t; }
-  function lerpGeom(r, t) { return r[0] * Math.pow(r[1] / r[0], t); }
+
+  // Light and dot size for an absolute zoom, from ZOOM_KEYS.
+  function zoomCurve(z) {
+    var k = ZOOM_KEYS;
+    if (z <= k[0].z) return { light: k[0].light, size: k[0].size };
+    for (var i = 1; i < k.length; i++) {
+      if (z <= k[i].z) {
+        var a = k[i - 1], b = k[i], t = (z - a.z) / (b.z - a.z);
+        return {
+          light: a.light * Math.pow(b.light / a.light, t),
+          size: a.size + (b.size - a.size) * t,
+        };
+      }
+    }
+    var last = k[k.length - 1];
+    return { light: last.light, size: last.size };
+  }
 
   // ---------------------------------------------------------------------------
   // State
@@ -262,16 +302,11 @@
   }
 
   // The sliders are ABSOLUTE readouts-and-controls, not trims: the zoom curve
-  // writes the computed value straight into opacidade's and tamanho's `value`,
-  // so those knobs slide on their own as you zoom and their position *is* the
-  // current value. brilho is set once to BRILHO_FIXED and never moves on zoom.
+  // writes the computed values straight into the sliders, so the knobs slide
+  // on their own as you zoom and their position *is* the current value.
   //
   // Dragging a slider overrides that value until the next zoom, which
   // re-asserts the curve — the cost of having the knobs track the zoom.
-  //
-  // t is normalized per place over the map's own interactive zoom range,
-  // [minZoom, maxZoom], because BR fits at ~zoom 3.7 while a small state fits
-  // above 8, so the same absolute zoom is a very different altitude.
   //
   // fromZoom: recompute from the curve and push the values into the sliders.
   // Otherwise the user just dragged one, so read the sliders as-is.
@@ -279,10 +314,11 @@
     if (!map) return;
     var z = map.getZoom();
     if (fromZoom) {
-      var zMin = map.getMinZoom(), zMax = map.getMaxZoom();
-      var t = clamp((z - zMin) / Math.max(zMax - zMin, 1e-9), 0, 1);
-      setKnob("opacity", lerpGeom(ZOOM_AUTO.alpha, t));
-      setKnob("dotsize", lerpLinear(ZOOM_AUTO.radius, t));
+      var c = zoomCurve(z);
+      var gain = clamp(c.light, 1, 2.5);
+      setKnob("opacity", clamp(c.light / gain, 0.05, 1));
+      setKnob("brightness", gain);
+      setKnob("dotsize", c.size);
     }
     $("zoomval").textContent = z.toFixed(2);
 
@@ -418,7 +454,8 @@
         if (requested !== uf) return;
         hideProgress();
         current = uf;
-        if (cached) schedule(true); else lightUp();
+        apply(true);
+        if (!cached) lightUp();
       })
       .catch(function (err) {
         if (requested !== uf) return;
@@ -508,7 +545,6 @@
       this.setAttribute("aria-expanded", open ? "true" : "false");
     });
 
-    setKnob("brightness", BRILHO_FIXED);
     knobs.forEach(function (name) {
       $(name).addEventListener("input", function () {
         $(name + "-out").textContent = (+this.value).toFixed(2);
