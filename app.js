@@ -399,15 +399,21 @@
   //
   // fromZoom: recompute from the curve and push the values into the sliders.
   // Otherwise the user just dragged one, so read the sliders as-is.
+  var sharedKnobs = null;   // slider values from a shared link, see showView
+
   function apply(fromZoom) {
     if (!map) return;
     var z = map.getZoom();
-    if (fromZoom) {
+    if (fromZoom && sharedKnobs && Math.abs(z - sharedKnobs.zoom) > 0.01) sharedKnobs = null;
+    if (fromZoom && sharedKnobs) {
+      knobs.forEach(function (name) { setKnob(name, sharedKnobs[name]); });
+    } else if (fromZoom) {
       var c = zoomCurve(z);
       setKnob("opacity", clamp(c.light, 0.05, 1));
       setKnob("brightness", clamp(brightCurve(z), 0.02, 2.5));
       setKnob("dotsize", c.size);
     }
+    if (fromZoom) writeHashSoon();
     $("zoomval").textContent = z.toFixed(2);
 
     var data = current && cache.get(current);
@@ -605,17 +611,34 @@
 
   // The URL carries the place and the camera, so a link opens on the same
   // angle: #sp/12.40/-23.55012/-46.63331/15/50 is
-  // place/zoom/lat/lng/bearing/pitch. A bare #sp still frames the whole place.
+  // place/zoom/lat/lng/bearing/pitch, optionally followed by the three
+  // sliders, /opacidade/brilho/tamanho, so the link carries the look too.
+  // A bare #sp still frames the whole place.
+  //
+  // The zoom in the URL is for a reference screen whose short side is
+  // REF_SIDE px, so a link frames the same patch of ground on any screen: a
+  // phone opens it a little further out, a big monitor a little closer in.
+  var REF_SIDE = 1000;
+  function screenShift() {
+    var c = map.getContainer();
+    return Math.log2(Math.min(c.clientWidth, c.clientHeight) / REF_SIDE);
+  }
   function fromHash() {
     var parts = location.hash.replace("#", "").split("/");
     var uf = parts[0].toUpperCase();
     if (!meta[uf]) uf = "BR";
     var n = parts.slice(1).map(Number);
-    if (n.length < 3 || n.slice(0, 3).some(isNaN)) return { uf: uf, view: null };
+    if (n.length < 3 || n.slice(0, 3).some(isNaN)) return { uf: uf, view: null, knobs: null };
+    var knobs = n.length >= 8 && !n.slice(5, 8).some(isNaN) ? {
+      opacity: clamp(n[5], 0.05, 1),
+      brightness: clamp(n[6], 0.02, 2.5),
+      dotsize: clamp(n[7], 0.1, 2.5),
+    } : null;
     return {
       uf: uf,
+      knobs: knobs,
       view: {
-        zoom: clamp(n[0], 2, MAX_ZOOM),
+        zoom: clamp(n[0] + screenShift(), 2, MAX_ZOOM),
         center: [clamp(n[2], -180, 180), clamp(n[1], -85, 85)],
         bearing: isNaN(n[3]) ? 0 : n[3],
         pitch: isNaN(n[4]) ? (tilted ? TILT : 0) : clamp(n[4], 0, 85),
@@ -626,10 +649,19 @@
   function writeHash() {
     if (!requested) return;
     var c = map.getCenter();
-    var hash = "#" + requested.toLowerCase() + "/" + map.getZoom().toFixed(2) + "/" +
+    var hash = "#" + requested.toLowerCase() + "/" + (map.getZoom() - screenShift()).toFixed(2) + "/" +
       c.lat.toFixed(5) + "/" + c.lng.toFixed(5) + "/" +
-      Math.round(map.getBearing()) + "/" + Math.round(map.getPitch());
+      Math.round(map.getBearing()) + "/" + Math.round(map.getPitch()) + "/" +
+      knobs.map(function (name) { return knobValue(name).toFixed(2); }).join("/");
     if (location.hash !== hash) history.replaceState(null, "", hash);
+  }
+
+  // Safari throttles replaceState, so the URL is written once the camera or a
+  // slider has rested, after the sliders have taken their new values.
+  var hashTimer = 0;
+  function writeHashSoon() {
+    clearTimeout(hashTimer);
+    hashTimer = setTimeout(writeHash, 300);
   }
 
   function setTilted(on) {
@@ -638,9 +670,13 @@
     $("tilt").textContent = on ? "inclinada" : "de cima";
   }
 
-  function showView(view) {
-    if (view) setTilted(view.pitch > 0);
-    return view;
+  // Takes fromHash()'s result and hands back the camera for select(). Shared
+  // slider values hold while the camera stays at the shared zoom; the first
+  // zoom away hands the sliders back to the zoom curve.
+  function showView(h) {
+    if (h.view) setTilted(h.view.pitch > 0);
+    sharedKnobs = h.view && h.knobs ? Object.assign({ zoom: h.view.zoom }, h.knobs) : null;
+    return h.view;
   }
 
   function showError(msg) {
@@ -744,6 +780,7 @@
       $(name).addEventListener("input", function () {
         $(name + "-out").textContent = (+this.value).toFixed(2);
         schedule(false);
+        writeHashSoon();
       });
     });
 
@@ -764,7 +801,7 @@
 
     window.addEventListener("hashchange", function () {
       var h = fromHash();
-      select(h.uf, showView(h.view));
+      select(h.uf, showView(h));
     });
   }
 
@@ -804,9 +841,9 @@
           points = createPointsLayer();
           map.addLayer(points);
           map.on("zoom", function () { schedule(true); });
-          map.on("moveend", writeHash);
+          map.on("moveend", writeHashSoon);
           var h = fromHash();
-          select(h.uf, showView(h.view));
+          select(h.uf, showView(h));
         });
       })
       .catch(function (err) {
