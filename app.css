@@ -1,0 +1,477 @@
+:root {
+  --night: #000000;
+  --lamp: #ede3d1;        /* warm off-white, the color dots saturate toward */
+  --dim: #8f8473;
+  --ember: #d9a99f;       /* the dot color lifted to read as text */
+  --ember-raw: 139, 87, 79; /* the dot color itself, kepler reference */
+  --glass: rgba(8, 6, 5, 0.62);
+  --hair: rgba(237, 227, 209, 0.14);
+  --display: "Bricolage Grotesque", system-ui, sans-serif;
+  --mono: "Martian Mono", ui-monospace, monospace;
+  --gutter: 20px;
+}
+
+* { box-sizing: border-box; }
+
+[hidden] { display: none !important; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  background: var(--night);
+  color: var(--lamp);
+  overflow: hidden;
+  font-family: var(--display);
+  -webkit-font-smoothing: antialiased;
+}
+
+#map { position: absolute; inset: 0; }
+
+/* Basemap is a plain black background; this only softens MapLibre's canvas
+   in case a style layer ever sneaks in. */
+#map .maplibregl-canvas { outline: none; }
+.maplibregl-ctrl-attrib { display: none; }
+
+button { font: inherit; color: inherit; }
+
+:focus-visible {
+  outline: 1px solid var(--lamp);
+  outline-offset: 2px;
+}
+
+/* ---------- masthead ---------- */
+
+.masthead {
+  position: absolute;
+  top: var(--gutter);
+  left: var(--gutter);
+  z-index: 10;
+  max-width: min(440px, calc(100vw - 2 * var(--gutter)));
+  pointer-events: none;
+}
+
+.wordmark {
+  margin: 0;
+  font-weight: 300;
+  font-size: clamp(30px, 4.2vw, 48px);
+  line-height: 0.95;
+  letter-spacing: -0.035em;
+  color: var(--dim);
+}
+
+/* The "il" of brasIL / ILuminado is the one lit thing in the type. */
+.wordmark .lit {
+  font-weight: 800;
+  color: var(--lamp);
+  text-shadow:
+    0 0 6px rgba(255, 214, 170, 0.75),
+    0 0 22px rgba(var(--ember-raw), 0.9),
+    0 0 48px rgba(var(--ember-raw), 0.7);
+}
+
+.dek {
+  margin: 10px 0 0;
+  max-width: 30ch;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--dim);
+}
+
+.readout {
+  margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.place {
+  font-weight: 800;
+  font-size: clamp(22px, 2.6vw, 30px);
+  letter-spacing: -0.02em;
+}
+
+.count {
+  font-family: var(--mono);
+  font-weight: 300;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--dim);
+}
+
+.count b {
+  font-weight: 400;
+  color: var(--lamp);
+}
+
+.progress {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--dim);
+}
+
+.progress .bar {
+  width: 120px;
+  height: 1px;
+  background: var(--hair);
+}
+
+.progress .bar i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--lamp);
+  box-shadow: 0 0 6px rgba(255, 214, 170, 0.8);
+  transition: width 80ms linear;
+}
+
+/* ---------- state picker ---------- */
+
+.picker {
+  position: absolute;
+  left: var(--gutter);
+  bottom: var(--gutter);
+  z-index: 10;
+  padding: 12px;
+  background: var(--glass);
+  border: 1px solid var(--hair);
+  border-radius: 4px;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+/* Tiles sit roughly where each state sits on the map. Their glow is the
+   number of geolocated establishments (log scale), set inline as --glow. */
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(7, 30px);
+  grid-template-rows: repeat(8, 30px);
+  gap: 3px;
+}
+
+.tile {
+  --glow: 0;
+  position: relative;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.02em;
+  color: rgba(237, 227, 209, calc(0.45 + var(--glow) * 0.55));
+  background: rgba(var(--ember-raw), calc(0.12 + var(--glow) * 0.75));
+  box-shadow: 0 0 calc(var(--glow) * 14px) rgba(var(--ember-raw), calc(var(--glow) * 0.8));
+  transition: background-color 160ms, border-color 160ms, color 160ms;
+}
+
+.tile:hover {
+  border-color: rgba(237, 227, 209, 0.5);
+  color: var(--lamp);
+}
+
+.tile[aria-pressed="true"] {
+  background: var(--lamp);
+  color: var(--night);
+  box-shadow: 0 0 8px rgba(255, 214, 170, 0.8), 0 0 24px rgba(var(--ember-raw), 0.9);
+}
+
+.tile:disabled {
+  cursor: not-allowed;
+  background: transparent;
+  border: 1px dashed var(--hair);
+  color: var(--dim);
+  box-shadow: none;
+}
+
+.tile-br {
+  width: auto;
+  height: 24px;
+  padding: 0 10px;
+  font-size: 10px;
+  --glow: 1;
+}
+
+.peek {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  width: 100%;
+  background: var(--night);
+  border: 1px solid var(--hair);
+  border-radius: 4px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* Crop the bottom strip of the stills, which carries an old basemap credit. */
+.peek img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 2.8;
+  object-fit: cover;
+  object-position: top;
+}
+
+.peek-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px 10px;
+}
+
+.peek-text strong { font-weight: 800; font-size: 15px; }
+
+.peek-text span {
+  font-family: var(--mono);
+  font-weight: 300;
+  font-size: 10px;
+  color: var(--dim);
+}
+
+.picker-toggle { display: none; }
+
+/* ---------- light controls ---------- */
+
+.light {
+  position: absolute;
+  top: var(--gutter);
+  right: var(--gutter);
+  z-index: 10;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: 280px;
+}
+
+.chip {
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--hair);
+  border-radius: 14px;
+  background: var(--glass);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.chip:hover,
+.chip[aria-expanded="true"] { border-color: rgba(237, 227, 209, 0.5); }
+
+.light-panel {
+  width: 100%;
+  padding: 14px;
+  background: var(--glass);
+  border: 1px solid var(--hair);
+  border-radius: 4px;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.knob {
+  display: block;
+  margin-bottom: 12px;
+}
+
+.knob span {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--dim);
+}
+
+.knob output { color: var(--lamp); font-variant-numeric: tabular-nums; }
+
+.knob input[type="range"] {
+  width: 100%;
+  margin: 6px 0 0;
+  accent-color: rgb(var(--ember-raw));
+}
+
+/* A knob the user has taken over stops following the zoom. */
+.knob.manual output::after {
+  content: " · manual";
+  color: var(--ember);
+}
+
+.light-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--dim);
+}
+
+.light-foot output { color: var(--lamp); font-variant-numeric: tabular-nums; }
+
+.link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ember);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.link:disabled { color: var(--dim); text-decoration: none; cursor: default; }
+
+.hint {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--dim);
+}
+
+/* ---------- about ---------- */
+
+.about {
+  max-width: 520px;
+  width: calc(100vw - 2 * var(--gutter));
+  max-height: calc(100vh - 2 * var(--gutter));
+  padding: 28px 28px 22px;
+  background: #0b0908;
+  color: var(--lamp);
+  border: 1px solid var(--hair);
+  border-radius: 4px;
+}
+
+.about::backdrop { background: rgba(0, 0, 0, 0.6); }
+
+.about h2 {
+  margin: 0 0 14px;
+  font-weight: 800;
+  font-size: 26px;
+  letter-spacing: -0.02em;
+}
+
+.about p {
+  margin: 0 0 12px;
+  font-size: 15px;
+  line-height: 1.5;
+  color: #cfc5b4;
+}
+
+.about em { color: var(--lamp); }
+.about a { color: var(--ember); }
+
+.about .fine {
+  margin-top: 18px;
+  font-family: var(--mono);
+  font-weight: 300;
+  font-size: 10px;
+  line-height: 1.7;
+  color: var(--dim);
+}
+
+.about .close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  border: 0;
+  background: none;
+  font-size: 22px;
+  color: var(--dim);
+  cursor: pointer;
+}
+
+.error {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 20;
+  max-width: calc(100vw - 2 * var(--gutter));
+  padding: 14px 18px;
+  background: #0b0908;
+  border: 1px solid var(--ember);
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+/* ---------- phones ---------- */
+
+@media (max-width: 640px) {
+  :root { --gutter: 16px; }
+
+  .dek { display: none; }
+  .readout { margin-top: 10px; }
+
+  .light { top: auto; bottom: var(--gutter); right: var(--gutter); flex-direction: column-reverse; align-items: flex-end; max-width: calc(100vw - 2 * var(--gutter)); }
+  .light-panel { width: min(280px, calc(100vw - 2 * var(--gutter))); }
+  #about-open { order: -1; }
+
+  .picker-toggle {
+    display: block;
+    position: absolute;
+    left: var(--gutter);
+    bottom: var(--gutter);
+    z-index: 13;
+  }
+
+  .picker-toggle {
+    height: 32px;
+    padding: 0 14px;
+    border: 1px solid var(--hair);
+    border-radius: 16px;
+    background: var(--glass);
+    font-family: var(--mono);
+    font-size: 10px;
+    cursor: pointer;
+  }
+
+  #picker-toggle-uf { font-weight: 400; color: var(--ember); margin-right: 4px; }
+
+  .picker {
+    left: 0;
+    right: 0;
+    bottom: 0;
+    border-radius: 8px 8px 0 0;
+    padding: 16px var(--gutter) calc(64px + env(safe-area-inset-bottom));
+    z-index: 12;
+    transform: translateY(100%);
+    transition: transform 220ms ease;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .picker.open { transform: none; }
+  .picker-head { width: 100%; max-width: 280px; }
+  .tiles { grid-template-columns: repeat(7, 36px); grid-template-rows: repeat(8, 36px); }
+  .peek { display: none !important; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}

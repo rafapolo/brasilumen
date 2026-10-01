@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>brasiluminado · cada ponto é um CNPJ</title>
+  <meta name="description" content="Mapa de luz dos estabelecimentos com CNPJ ativo no Brasil, cada um posto no seu endereço do Censo IBGE 2022.">
+  <meta property="og:title" content="brasiluminado">
+  <meta property="og:description" content="Cada ponto é um estabelecimento com CNPJ ativo, no seu endereço do Censo 2022.">
+  <meta property="og:image" content="thumbs/br.png">
+  <meta name="theme-color" content="#000000">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300;12..96,500;12..96,800&family=Martian+Mono:wght@300;400&display=swap" rel="stylesheet">
+
+  <link href="https://unpkg.com/maplibre-gl@3.4.0/dist/maplibre-gl.css" rel="stylesheet">
+  <script src="https://unpkg.com/maplibre-gl@3.4.0/dist/maplibre-gl.js"></script>
+  <script src="https://unpkg.com/deck.gl@9.0.0/dist.min.js"></script>
+
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <div id="map" aria-label="Mapa de pontos de estabelecimentos"></div>
+
+  <header class="masthead">
+    <h1 class="wordmark">bras<span class="lit">il</span>uminado</h1>
+    <p class="dek">Cada ponto é um estabelecimento com CNPJ ativo, posto no seu endereço do Censo&nbsp;2022.</p>
+    <div class="readout" aria-live="polite">
+      <span id="place" class="place">Brasil</span>
+      <span id="count" class="count"></span>
+    </div>
+    <div id="progress" class="progress" hidden>
+      <div class="bar"><i id="progress-fill"></i></div>
+      <span id="progress-text"></span>
+    </div>
+  </header>
+
+  <nav id="picker" class="picker" aria-label="Escolher estado">
+    <div class="picker-head">
+      <span class="label">estados</span>
+      <button type="button" class="tile tile-br" data-uf="BR" aria-pressed="false">Brasil</button>
+    </div>
+    <div id="tiles" class="tiles"></div>
+    <div id="peek" class="peek" hidden>
+      <img id="peek-img" alt="">
+      <div class="peek-text">
+        <strong id="peek-name"></strong>
+        <span id="peek-stats"></span>
+      </div>
+    </div>
+  </nav>
+
+  <button type="button" id="picker-toggle" class="picker-toggle" aria-controls="picker" aria-expanded="false">
+    <span id="picker-toggle-uf">BR</span> estados
+  </button>
+
+  <aside class="light" aria-label="Ajustes de luz">
+    <button type="button" id="light-toggle" class="chip" aria-expanded="false" aria-controls="light-panel">luz</button>
+    <button type="button" id="tilt" class="chip" aria-pressed="true" title="Alternar entre vista inclinada e de cima">inclinada</button>
+    <button type="button" id="about-open" class="chip">como foi feito</button>
+    <div id="light-panel" class="light-panel" hidden>
+      <label class="knob">
+        <span>opacidade <output id="opacity-out"></output></span>
+        <input type="range" id="opacity" min="0.05" max="1" step="0.01" value="0.8">
+      </label>
+      <label class="knob">
+        <span>brilho <output id="brightness-out"></output></span>
+        <input type="range" id="brightness" min="0.02" max="2.5" step="0.01" value="1.25">
+      </label>
+      <label class="knob">
+        <span>tamanho <output id="dotsize-out"></output></span>
+        <input type="range" id="dotsize" min="0.1" max="2.5" step="0.01" value="1">
+      </label>
+      <div class="light-foot">
+        <button type="button" id="auto" class="link" disabled>voltar ao automático</button>
+        <span class="zoom">zoom <output id="zoomval">–</output></span>
+      </div>
+      <p class="hint">Opacidade e tamanho acompanham o zoom até você mexer neles.</p>
+    </div>
+  </aside>
+
+  <dialog id="about" class="about">
+    <form method="dialog"><button class="close" aria-label="Fechar">×</button></form>
+    <h2>Como foi feito</h2>
+    <p>Os pontos vêm do cadastro de CNPJ da Receita Federal: só estabelecimentos com situação
+      <em>ativa</em>. Cada endereço foi casado exatamente com um endereço do Cadastro Nacional
+      de Endereços para Fins Estatísticos (CNEFE) do Censo IBGE 2022, que tem coordenadas.</p>
+    <p>Não há recurso ao centroide do CEP: quando o endereço não casa, o estabelecimento fica fora
+      do mapa. Por isso cada estado mostra quantos dos seus ativos foram geolocalizados.
+      Vários estabelecimentos no mesmo endereço viram um ponto só.</p>
+    <p>A vista do Brasil é uma amostra de 2 milhões dos <span id="sum-points"></span> pontos dos estados,
+      para caber no navegador. Abra um estado para ver todos os pontos dele.
+      O Distrito Federal ainda não tem arquivo.</p>
+    <p>A soma de luz é aditiva: onde muitos pontos se empilham, a cor satura até o branco.
+      Brilho controla quantos pontos são precisos para isso.</p>
+    <p class="fine">Dados: Receita Federal (CNPJ), IBGE (CNEFE, Censo 2022), via Base dos Dados.
+      Mapa: MapLibre e deck.gl. <a href="https://github.com/rafapolo/brasiluminado">Código</a>.</p>
+  </dialog>
+
+  <div id="error" class="error" role="alert" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
