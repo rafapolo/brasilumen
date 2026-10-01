@@ -491,12 +491,13 @@
   function easeOutSeat(t) { var u = t - 1; return 1 + 2.2 * u * u * u + 1.2 * u * u; }
 
   // Flies to the place and resolves when the camera has arrived, or when the
-  // flight was cut short (by the user, or by another fly()).
-  function fly(uf) {
+  // flight was cut short (by the user, or by another fly()). With a view (from
+  // a shared link) it lands straight on that camera instead of framing the place.
+  function fly(uf, view) {
     var cam = cameraFor(uf);
     var target = Math.min(8, cam.zoom);
     var id = ++flight;
-    var end = { center: cam.center, zoom: cam.zoom, pitch: tilted ? TILT : 0, bearing: 0 };
+    var end = view || { center: cam.center, zoom: cam.zoom, pitch: tilted ? TILT : 0, bearing: 0 };
     // The arc between two places climbs well above both; minZoom would clip
     // it into a fast low pan, so open it all the way for the flight.
     map.setMinZoom(Math.min(map.getMinZoom(), 2));
@@ -514,7 +515,7 @@
         return Math.abs(at.lng - to.lng) < 0.01 && Math.abs(at.lat - to.lat) < 0.01;
       }
 
-      if (reduceMotion) {
+      if (reduceMotion || view) {
         map.jumpTo(end);
         settle();
         return;
@@ -565,21 +566,22 @@
     $("picker-toggle-uf").textContent = uf;
   }
 
-  function select(uf) {
+  function select(uf, view) {
     if (!meta[uf]) uf = "BR";
-    if (uf === requested) return;
+    if (uf === requested) {
+      if (view) fly(uf, view);
+      return;
+    }
     requested = uf;
     markTiles(uf);
     setReadout(uf);
-    var hash = uf === "BR" ? "" : "#" + uf.toLowerCase();
-    if (location.hash !== hash) history.replaceState(null, "", hash || location.pathname + location.search);
     // Fly over the whole-country sample, so the path between two states is
     // lit instead of black; the place's own points light up on arrival.
     if (current && current !== "BR" && current !== uf && cache.has("BR")) {
       current = "BR";
       apply(false);
     }
-    var landing = fly(uf);
+    var landing = fly(uf, view);
 
     var label = "acendendo " + (uf === "BR" ? "o Brasil" : uf);
     var cached = cache.has(uf);
@@ -601,9 +603,44 @@
       });
   }
 
+  // The URL carries the place and the camera, so a link opens on the same
+  // angle: #sp/12.40/-23.55012/-46.63331/15/50 is
+  // place/zoom/lat/lng/bearing/pitch. A bare #sp still frames the whole place.
   function fromHash() {
-    var uf = location.hash.replace("#", "").toUpperCase();
-    return meta[uf] ? uf : "BR";
+    var parts = location.hash.replace("#", "").split("/");
+    var uf = parts[0].toUpperCase();
+    if (!meta[uf]) uf = "BR";
+    var n = parts.slice(1).map(Number);
+    if (n.length < 3 || n.slice(0, 3).some(isNaN)) return { uf: uf, view: null };
+    return {
+      uf: uf,
+      view: {
+        zoom: clamp(n[0], 2, MAX_ZOOM),
+        center: [clamp(n[2], -180, 180), clamp(n[1], -85, 85)],
+        bearing: isNaN(n[3]) ? 0 : n[3],
+        pitch: isNaN(n[4]) ? (tilted ? TILT : 0) : clamp(n[4], 0, 85),
+      },
+    };
+  }
+
+  function writeHash() {
+    if (!requested) return;
+    var c = map.getCenter();
+    var hash = "#" + requested.toLowerCase() + "/" + map.getZoom().toFixed(2) + "/" +
+      c.lat.toFixed(5) + "/" + c.lng.toFixed(5) + "/" +
+      Math.round(map.getBearing()) + "/" + Math.round(map.getPitch());
+    if (location.hash !== hash) history.replaceState(null, "", hash);
+  }
+
+  function setTilted(on) {
+    tilted = on;
+    $("tilt").setAttribute("aria-pressed", on ? "true" : "false");
+    $("tilt").textContent = on ? "inclinada" : "de cima";
+  }
+
+  function showView(view) {
+    if (view) setTilted(view.pitch > 0);
+    return view;
   }
 
   function showError(msg) {
@@ -711,9 +748,7 @@
     });
 
     $("tilt").addEventListener("click", function () {
-      tilted = !tilted;
-      this.setAttribute("aria-pressed", tilted ? "true" : "false");
-      this.textContent = tilted ? "inclinada" : "de cima";
+      setTilted(!tilted);
       map.easeTo({ pitch: tilted ? TILT : 0, bearing: tilted ? map.getBearing() : 0, duration: reduceMotion ? 0 : 900 });
     });
 
@@ -727,7 +762,10 @@
       }
     });
 
-    window.addEventListener("hashchange", function () { select(fromHash()); });
+    window.addEventListener("hashchange", function () {
+      var h = fromHash();
+      select(h.uf, showView(h.view));
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -766,7 +804,9 @@
           points = createPointsLayer();
           map.addLayer(points);
           map.on("zoom", function () { schedule(true); });
-          select(fromHash());
+          map.on("moveend", writeHash);
+          var h = fromHash();
+          select(h.uf, showView(h.view));
         });
       })
       .catch(function (err) {
