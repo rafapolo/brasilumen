@@ -29,13 +29,13 @@
   //     13   2.00    0.35      each establishment a sharp street-lamp pinpoint
   //     15   2.50    0.35      same, isolated lamps
   //
-  // light = opacidade * brilho, the per-dot alpha before additive blending.
+  // light sets opacidade (capped at 1); the per-dot alpha before additive
+  // blending is opacidade * brilho, and brilho has its own curve (BRIGHT_KEYS).
   // Light is not monotonic: past the state view it dips so dense metros keep
   // their gradient, then climbs back as the dots separate. It is interpolated
   // geometrically (light is read as ratios, and density falls 4x per zoom
   // level); tamanho linearly, shrinking as you descend so
-  // dots stay crisp instead of merging. Above 1 the light spills from
-  // opacidade (capped at 1) into brilho.
+  // dots stay crisp instead of merging.
   var ZOOM_KEYS = [
     { z: 3, light: 0.08, size: 0.6 },
     { z: 6, light: 0.25, size: 0.6 },
@@ -43,6 +43,16 @@
     { z: 10, light: 0.2, size: 0.4 },
     { z: 13, light: 2.0, size: 0.35 },
     { z: 15, light: 2.5, size: 0.35 },
+  ];
+
+  // brilho has its own curve, independent of light: nearly off from afar
+  // (<= 4), waking through the state view (7) and at least 2 from 8 down.
+  // opacidade still follows light (capped at 1).
+  var BRIGHT_KEYS = [
+    { z: 4, v: 0.04 },
+    { z: 7, v: 0.6 },
+    { z: 8, v: 2.0 },
+    { z: 15, v: 2.5 },
   ];
 
   var NAMES = {
@@ -88,6 +98,19 @@
     }
     var last = k[k.length - 1];
     return { light: last.light, size: last.size };
+  }
+
+  // brilho for an absolute zoom, from BRIGHT_KEYS, interpolated geometrically.
+  function brightCurve(z) {
+    var k = BRIGHT_KEYS;
+    if (z <= k[0].z) return k[0].v;
+    for (var i = 1; i < k.length; i++) {
+      if (z <= k[i].z) {
+        var a = k[i - 1], b = k[i];
+        return a.v * Math.pow(b.v / a.v, (z - a.z) / (b.z - a.z));
+      }
+    }
+    return k[k.length - 1].v;
   }
 
   // ---------------------------------------------------------------------------
@@ -381,9 +404,8 @@
     var z = map.getZoom();
     if (fromZoom) {
       var c = zoomCurve(z);
-      var gain = clamp(c.light, 1, 2.5);
-      setKnob("opacity", clamp(c.light / gain, 0.05, 1));
-      setKnob("brightness", gain);
+      setKnob("opacity", clamp(c.light, 0.05, 1));
+      setKnob("brightness", clamp(brightCurve(z), 0.02, 2.5));
       setKnob("dotsize", c.size);
     }
     $("zoomval").textContent = z.toFixed(2);
@@ -463,22 +485,62 @@
   // less to fit (BR fits at ~3.7). Lowered first so the flight is not clamped,
   // then settled once the camera arrives.
   var settleMinZoom = null;
+  var flight = 0;
+
+  function easeInOutSine(t) { return -(Math.cos(Math.PI * t) - 1) / 2; }
+  // Ends a touch past 1 and comes back: the camera lands, then seats.
+  function easeOutSeat(t) { var u = t - 1; return 1 + 2.2 * u * u * u + 1.2 * u * u; }
 
   function fly(uf) {
     var cam = cameraFor(uf);
     var target = Math.min(8, cam.zoom);
-    map.setMinZoom(Math.min(map.getMinZoom(), target, map.getZoom()));
+    var id = ++flight;
+    map.setMinZoom(Math.min(map.getMinZoom(), target, map.getZoom(), cam.zoom - 0.4));
     if (settleMinZoom) map.off("moveend", settleMinZoom);
     settleMinZoom = function () {
-      map.off("moveend", settleMinZoom);
       settleMinZoom = null;
       map.setMinZoom(target);
       schedule(true);
     };
-    map.once("moveend", settleMinZoom);
-    var opts = { center: cam.center, zoom: cam.zoom, pitch: tilted ? TILT : 0, bearing: 0 };
-    if (reduceMotion) map.jumpTo(opts);
-    else map.flyTo(Object.assign(opts, { duration: 2200, essential: true }));
+    var end = { center: cam.center, zoom: cam.zoom, pitch: tilted ? TILT : 0, bearing: 0 };
+    if (reduceMotion) {
+      map.once("moveend", settleMinZoom);
+      map.jumpTo(end);
+      return;
+    }
+
+    // Lean into the direction of travel, arrive a little short and unrotated
+    // only at the very end, the way a hand would swing the map over.
+    var from = map.getCenter();
+    var to = maplibregl.LngLat.convert(cam.center);
+    var dist = Math.hypot(to.lng - from.lng, to.lat - from.lat);
+    var lean = Math.max(-9, Math.min(9, (to.lng - from.lng) * 0.6));
+    if (dist < 0.05) lean = 0;
+
+    map.once("moveend", function () {
+      if (id !== flight) return;
+      // Interrupted by a drag or wheel: leave the camera where the user took it.
+      var at = map.getCenter();
+      if (Math.hypot(at.lng - to.lng, at.lat - to.lat) > 0.01) {
+        if (settleMinZoom) settleMinZoom();
+        return;
+      }
+      map.once("moveend", function () {
+        if (id === flight && settleMinZoom) settleMinZoom();
+      });
+      map.easeTo(Object.assign({}, end, { duration: 750, easing: easeOutSeat, essential: true }));
+    });
+    map.flyTo({
+      center: end.center,
+      zoom: cam.zoom - 0.35,
+      pitch: end.pitch,
+      bearing: lean,
+      speed: 1.1,
+      curve: 1.3,
+      maxDuration: 3200,
+      easing: easeInOutSine,
+      essential: true,
+    });
   }
 
   // ---------------------------------------------------------------------------
