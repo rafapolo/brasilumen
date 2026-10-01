@@ -25,7 +25,13 @@ arquivos já compactados são ignorados.
 
 Página estática, sem build: `index.html`, `app.js`, `app.css` e `worker.js` (download e
 decodificação fora da thread principal). MapLibre GL com uma camada WebGL própria que desenha
-cada estabelecimento como um ponto com mistura aditiva. `thumbs/` são imagens estáticas de cada UF usadas na prévia do seletor.
+cada estabelecimento como um ponto com mistura aditiva. De longe, onde centenas de pontos caem no
+mesmo pixel, o worker junta os pontos de cada célula da grade num ponto só que carrega a contagem e
+soma a mesma luz; a camada só usa um nível cujas células ficam abaixo de ⅓ de pixel, então a imagem
+não muda.
+
+Ao mudar `app.js`, `app.css` ou `worker.js`, suba o `?v=` em `index.html` e em `app.js`, para o
+cache do GitHub Pages não misturar versões. `thumbs/` são imagens estáticas de cada UF usadas na prévia do seletor.
 
 Para rodar localmente:
 

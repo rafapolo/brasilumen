@@ -121,17 +121,30 @@
   // ---------------------------------------------------------------------------
   // Loading
 
-  var worker = new Worker("worker.js");
+  // Versioned so a cached worker never pairs with a newer app.js (GitHub
+  // Pages caches for 10 min). Bump together with the ?v= in index.html.
+  var worker = new Worker("worker.js?v=4");
   var nextId = 0;
   var pending = {};
 
+  var levelsFor = {};   // request id -> uf, for the levels that follow the points
+
   worker.onmessage = function (e) {
     var d = e.data;
+    if (d.levels) {
+      var target = cache.get(levelsFor[d.id]);
+      delete levelsFor[d.id];
+      if (target) {
+        target.levels = d.levels;
+        if (points) points.refresh();
+      }
+      return;
+    }
     var p = pending[d.id];
     if (!p) return;
     if (d.progress !== undefined) { p.onProgress(d.progress); return; }
     delete pending[d.id];
-    if (d.ok) p.resolve({ n: d.n, positions: d.positions, origin: d.origin });
+    if (d.ok) p.resolve({ id: d.id, n: d.n, positions: d.positions, origin: d.origin, q: d.q });
     else p.reject(new Error(d.error));
   };
 
@@ -145,8 +158,9 @@
       pending[id] = { resolve: resolve, reject: reject, onProgress: onProgress };
       worker.postMessage({ id: id, url: url });
     }).then(function (pts) {
-      var data = { uf: uf, n: pts.n, positions: pts.positions, origin: pts.origin };
+      var data = { uf: uf, n: pts.n, positions: pts.positions, origin: pts.origin, q: pts.q, levels: [] };
       remember(uf, data);
+      levelsFor[pts.id] = uf;
       return data;
     });
   }
@@ -181,31 +195,52 @@
   // Positions arrive from the worker as Web Mercator offsets from a per-file
   // origin, so float32 keeps sub-pixel precision at max zoom; the origin is
   // folded into the matrix in float64 here.
+  //
+  // Far out, hundreds of dots land on one pixel and blending each of them is
+  // what costs the frame. The worker therefore also sends merged levels: every
+  // point in a grid cell becomes one dot carrying the count (see worker.js).
+  // The layer picks the coarsest level whose cells stay under LOD_MAX_PX of a
+  // device pixel, and draws a merged dot with count times the light: additive
+  // blending is linear and clamps to white the same way, so the picture is
+  // the same as drawing every dot. Hence the premultiplied form below,
+  // rgb * min(1, light * coverage) * count with blend ONE + ONE, which equals
+  // the old SRC_ALPHA + ONE with alpha = light * coverage for a single dot.
+  var LOD_MAX_PX = 0.3;
+
   var VS = [
     "attribute vec2 a_pos;",
+    "attribute float a_count;",
     "uniform mat4 u_matrix;",
     "uniform float u_size;",
+    "varying float v_count;",
     "void main() {",
     "  gl_Position = u_matrix * vec4(a_pos, 0.0, 1.0);",
     "  gl_PointSize = u_size;",
+    "  v_count = min(a_count, 60000.0);",  // stays finite in mediump; white long before
     "}",
   ].join("\n");
 
   var FS = [
+    "#ifdef GL_FRAGMENT_PRECISION_HIGH",
+    "precision highp float;",
+    "#else",
     "precision mediump float;",
-    "uniform vec4 u_color;",
+    "#endif",
+    "uniform vec3 u_rgb;",
+    "uniform float u_light;",    // opacidade * brilho
     "uniform float u_radius;",   // R, CSS px
     "uniform float u_extent;",   // R + 0.5, the sprite's half-size in CSS px
+    "varying float v_count;",
     "void main() {",
     "  float d = length(gl_PointCoord * 2.0 - 1.0) * u_extent;",
-    "  float a = smoothstep(d - 0.5, d + 0.5, u_radius);",
-    "  gl_FragColor = vec4(u_color.rgb, u_color.a * a);",
+    "  float cover = smoothstep(d - 0.5, d + 0.5, u_radius);",
+    "  gl_FragColor = vec4(u_rgb * min(1.0, u_light * cover) * v_count, 1.0);",
     "}",
   ].join("\n");
 
   function createPointsLayer() {
     var gl = null, prog = null, loc = {};
-    var buffers = new Map();       // uf -> GL buffer
+    var buffers = new Map();       // uf + level -> GL buffer
     var data = null;
     var params = { alpha: 0.8, gain: 1, radius: BASE_RADIUS };
 
@@ -217,15 +252,30 @@
       return sh;
     }
 
-    function bufferFor(d) {
-      var buf = buffers.get(d.uf);
+    function bufferFor(key, array) {
+      var buf = buffers.get(key);
       if (!buf) {
         buf = gl.createBuffer();
         gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-        gl.bufferData(gl.ARRAY_BUFFER, d.positions, gl.STATIC_DRAW);
-        buffers.set(d.uf, buf);
+        gl.bufferData(gl.ARRAY_BUFFER, array, gl.STATIC_DRAW);
+        buffers.set(key, buf);
       }
       return buf;
+    }
+
+    // Coarsest level whose cells stay under LOD_MAX_PX device pixels where the
+    // map is closest to the camera. A cell is 2^k grid steps of q degrees; one
+    // degree of latitude is up to ~1.25x a degree of longitude in Mercator
+    // over Brazil, and under the tilt the bottom of the screen is magnified
+    // up to ~1 + pitch/45 against the centre.
+    function pickLevel(d, zoom, dpr, pitch) {
+      var pxWorld = 1 / (512 * Math.pow(2, zoom) * dpr);
+      var limit = (LOD_MAX_PX * pxWorld) / (1.25 * (1 + pitch / 45));
+      var best = null;
+      for (var i = 0; i < d.levels.length; i++) {
+        if ((Math.pow(2, d.levels[i].k) * d.q) / 360 <= limit) best = d.levels[i];
+      }
+      return best;
     }
 
     return {
@@ -240,8 +290,8 @@
         gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FS));
         gl.linkProgram(prog);
         if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
-        ["a_pos"].forEach(function (k) { loc[k] = gl.getAttribLocation(prog, k); });
-        ["u_matrix", "u_size", "u_color", "u_radius", "u_extent"].forEach(function (k) {
+        ["a_pos", "a_count"].forEach(function (k) { loc[k] = gl.getAttribLocation(prog, k); });
+        ["u_matrix", "u_size", "u_rgb", "u_light", "u_radius", "u_extent"].forEach(function (k) {
           loc[k] = gl.getUniformLocation(prog, k);
         });
       },
@@ -255,27 +305,40 @@
 
         var dpr = map.getPixelRatio ? map.getPixelRatio() : window.devicePixelRatio || 1;
         var R = params.radius, extent = R + 0.5;
+        var level = pickLevel(data, map.getZoom(), dpr, map.getPitch());
 
         gl.useProgram(prog);
-        gl.bindBuffer(gl.ARRAY_BUFFER, bufferFor(data));
         gl.enableVertexAttribArray(loc.a_pos);
-        gl.vertexAttribPointer(loc.a_pos, 2, gl.FLOAT, false, 0, 0);
+        if (level) {
+          gl.bindBuffer(gl.ARRAY_BUFFER, bufferFor(data.uf + ":" + level.k, level.data));
+          gl.vertexAttribPointer(loc.a_pos, 2, gl.FLOAT, false, 12, 0);
+          gl.enableVertexAttribArray(loc.a_count);
+          gl.vertexAttribPointer(loc.a_count, 1, gl.FLOAT, false, 12, 8);
+        } else {
+          gl.bindBuffer(gl.ARRAY_BUFFER, bufferFor(data.uf, data.positions));
+          gl.vertexAttribPointer(loc.a_pos, 2, gl.FLOAT, false, 0, 0);
+          gl.disableVertexAttribArray(loc.a_count);
+          gl.vertexAttrib1f(loc.a_count, 1);
+        }
         gl.uniformMatrix4fv(loc.u_matrix, false, m);
         gl.uniform1f(loc.u_size, 2 * extent * dpr);
         gl.uniform1f(loc.u_radius, R);
         gl.uniform1f(loc.u_extent, extent);
-        gl.uniform4f(loc.u_color, DOT_COLOR[0] / 255, DOT_COLOR[1] / 255, DOT_COLOR[2] / 255,
-          (Math.round(255 * params.alpha) / 255) * params.gain);
+        gl.uniform3f(loc.u_rgb, DOT_COLOR[0] / 255, DOT_COLOR[1] / 255, DOT_COLOR[2] / 255);
+        gl.uniform1f(loc.u_light, (Math.round(255 * params.alpha) / 255) * params.gain);
         gl.disable(gl.DEPTH_TEST);
         gl.disable(gl.STENCIL_TEST);
         gl.enable(gl.BLEND);
         gl.blendEquation(gl.FUNC_ADD);
-        gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
-        gl.drawArrays(gl.POINTS, 0, data.n);
+        gl.blendFunc(gl.ONE, gl.ONE);
+        gl.drawArrays(gl.POINTS, 0, level ? level.n : data.n);
         gl.disableVertexAttribArray(loc.a_pos);
+        gl.disableVertexAttribArray(loc.a_count);
       },
 
       show: function (d) { data = d; map.triggerRepaint(); },
+
+      refresh: function () { map.triggerRepaint(); },
 
       set: function (alpha, gain, radius) {
         params.alpha = alpha;
@@ -285,9 +348,12 @@
       },
 
       forget: function (uf) {
-        var buf = buffers.get(uf);
-        if (buf && gl) gl.deleteBuffer(buf);
-        buffers.delete(uf);
+        buffers.forEach(function (buf, key) {
+          if (key === uf || key.indexOf(uf + ":") === 0) {
+            if (gl) gl.deleteBuffer(buf);
+            buffers.delete(key);
+          }
+        });
       },
     };
   }
@@ -518,15 +584,36 @@
     function showPeek(t) {
       var uf = t && t.dataset.uf;
       if (!uf || !meta[uf]) { peek.hidden = true; return; }
-      $("peek-img").src = "thumbs/" + uf.toLowerCase() + ".png";
+      $("peek-img").src = "thumbs/" + uf.toLowerCase() + ".webp";
       $("peek-name").textContent = NAMES[uf];
       $("peek-stats").textContent = fmt(meta[uf].n_estab_geolocalizados) + " estabelecimentos";
       peek.hidden = false;
     }
-    $("picker").addEventListener("pointerover", function (e) { showPeek(e.target.closest(".tile[data-uf]")); });
+    $("picker").addEventListener("pointerover", function (e) {
+      var t = e.target.closest(".tile[data-uf]");
+      showPeek(t);
+      prefetchSoon(t && t.dataset.uf);
+    });
     $("picker").addEventListener("pointerleave", function () { peek.hidden = true; });
     $("picker").addEventListener("focusin", function (e) { showPeek(e.target.closest(".tile[data-uf]")); });
     $("picker").addEventListener("focusout", function () { peek.hidden = true; });
+  }
+
+  // Hovering a tile for a moment starts its download into the HTTP cache, so
+  // the click usually finds the file already there. The delay keeps a mouse
+  // sweeping across the grid from pulling every state.
+  var prefetched = {};
+  var prefetchTimer = 0;
+  function prefetchSoon(uf) {
+    clearTimeout(prefetchTimer);
+    if (!uf || !meta[uf] || prefetched[uf] || cache.has(uf)) return;
+    prefetchTimer = setTimeout(function () {
+      prefetched[uf] = true;
+      // Read the body through, or the browser may not keep it in the cache.
+      fetch("data/" + uf.toLowerCase() + ".bin.gz", { priority: "low" })
+        .then(function (r) { return r.arrayBuffer(); })
+        .catch(function () { prefetched[uf] = false; });
+    }, 250);
   }
 
   function closePicker() {

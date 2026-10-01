@@ -45,9 +45,15 @@ self.onmessage = function (e) {
     .then(function (buf) {
       var out = decode(buf);
       if (current === controller) current = null;
+      // Points first, so the map lights up now; the merged levels follow.
       self.postMessage(
-        { id: id, ok: true, n: out.positions.length / 2, positions: out.positions, origin: out.origin },
+        { id: id, ok: true, n: out.n, positions: out.positions, origin: out.origin, q: out.q },
         [out.positions.buffer]
+      );
+      var levels = buildLevels(out);
+      self.postMessage(
+        { id: id, levels: levels },
+        levels.map(function (l) { return l.data.buffer; })
       );
     })
     .catch(function (err) {
@@ -65,6 +71,24 @@ function mercY(lat) {
   return 0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI);
 }
 
+// y is not linear in latitude, and sin+log per point was most of the decode
+// time on SP. Mercator y is smooth, so a table every 64 grid units (~70 m)
+// with linear interpolation is exact to ~1e-11, far below a pixel.
+var TABLE_STEP = 64;
+
+function mercTable(lat0, q, max, oy) {
+  var size = Math.floor(max / TABLE_STEP) + 2;
+  var t = new Float64Array(size);
+  for (var j = 0; j < size; j++) t[j] = mercY(lat0 + j * TABLE_STEP * q) - oy;
+  return t;
+}
+
+function lookup(t, gi) {
+  var j = (gi / TABLE_STEP) | 0;
+  var f = gi / TABLE_STEP - j;
+  return t[j] + (t[j + 1] - t[j]) * f;
+}
+
 // Decodes straight into the GPU-ready buffer: interleaved [x,y,...] as
 // Mercator offsets from the grid origin. Offsets keep float32 precise (a
 // state spans ~0.03 world units, so float32 resolves well under a pixel at
@@ -80,10 +104,12 @@ function decode(buf) {
   var ox = mercX(lng0), oy = mercY(lat0);
   var bytes = new Uint8Array(buf, 32);
   var positions = new Float32Array(n * 2);
+  var grid = [new Int32Array(n), new Int32Array(n)]; // integer grid x, y for the levels
   var p = 0;
 
   for (var axis = 0; axis < 2; axis++) {
-    var acc = 0;
+    var acc = 0, max = 0;
+    var g = grid[axis];
     for (var i = 0; i < n; i++) {
       // LEB128; grid indexes fit well inside 2^31, so 32-bit math is safe.
       var b = bytes[p++];
@@ -95,10 +121,71 @@ function decode(buf) {
         shift += 7;
       }
       acc += (v >>> 1) ^ -(v & 1); // un-zigzag
-      positions[i * 2 + axis] = axis === 0
-        ? (acc * q) / 360                 // x is linear in longitude
-        : mercY(lat0 + acc * q) - oy;     // y is not
+      g[i] = acc;
+      if (acc > max) max = acc;
+    }
+    if (axis === 0) {
+      var sx = q / 360;                   // x is linear in longitude
+      for (i = 0; i < n; i++) positions[i * 2] = g[i] * sx;
+    } else {
+      var table = mercTable(lat0, q, max, oy);
+      for (i = 0; i < n; i++) positions[i * 2 + 1] = lookup(table, g[i]);
     }
   }
-  return { positions: positions, origin: [ox, oy] };
+  return {
+    n: n, positions: positions, origin: [ox, oy], q: q,
+    yTable: table, gx: grid[0], gy: grid[1],
+  };
+}
+
+// Level of detail for far zooms, where hundreds of dots land on one pixel and
+// blending each of them separately is what makes the frame slow.
+//
+// Level k merges every point inside one 2^k x 2^k cell of the grid into a
+// single dot at their centroid, carrying the count. The layer draws it with
+// count times the light, which is what the stacked dots would have summed to
+// (additive blending is linear and clamps to white the same way), and only
+// switches to a level whose cells are a fraction of a device pixel, so the
+// picture does not change.
+//
+// Points are in Morton order, so the points of a cell are contiguous at every
+// level: each level is one linear pass over the previous one.
+//
+var LEVEL_FIRST = 6;  // finer cells merge too little to be worth a level
+var LEVEL_STEP = 2;   // then cells grow 4x per side each level
+
+function buildLevels(pts) {
+  var levels = [];
+  var n = pts.n, q = pts.q;
+  var yTable = pts.yTable;
+  var ix = pts.gx, iy = pts.gy, cnt = null;     // input: raw points, count 1
+  var sx0 = null, sy0 = null;                   // input sums of grid coords
+  for (var k = LEVEL_FIRST, shift = LEVEL_FIRST; k <= 24; k += LEVEL_STEP, shift = LEVEL_STEP) {
+    var cxs = new Int32Array(n), cys = new Int32Array(n);
+    var sumx = new Float64Array(n), sumy = new Float64Array(n), cs = new Float32Array(n);
+    var m = 0, i = 0;
+    while (i < n) {
+      var cx = ix[i] >> shift, cy = iy[i] >> shift;
+      var sx = 0, sy = 0, c = 0;
+      do {
+        if (cnt === null) { sx += ix[i]; sy += iy[i]; c += 1; }
+        else { sx += sx0[i]; sy += sy0[i]; c += cnt[i]; }
+        i++;
+      } while (i < n && ix[i] >> shift === cx && iy[i] >> shift === cy);
+      cxs[m] = cx; cys[m] = cy; sumx[m] = sx; sumy[m] = sy; cs[m] = c;
+      m++;
+    }
+    // Centroid in grid units -> Mercator offsets, like decode() does.
+    var data = new Float32Array(m * 3);
+    for (var j = 0; j < m; j++) {
+      data[j * 3] = (sumx[j] / cs[j]) * q / 360;
+      data[j * 3 + 1] = lookup(yTable, sumy[j] / cs[j]);
+      data[j * 3 + 2] = cs[j];
+    }
+    levels.push({ k: k, n: m, data: data });
+    if (m < 2000) break;
+    ix = cxs.subarray(0, m); iy = cys.subarray(0, m);
+    sx0 = sumx; sy0 = sumy; cnt = cs; n = m;
+  }
+  return levels;
 }
