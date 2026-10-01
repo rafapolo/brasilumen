@@ -492,7 +492,7 @@
       pct.toFixed(0) + "% dos " + fmt(info.n_estab_ativos) + " ativos";
     if (uf === "BR") html += "<br>vista com amostra de " + fmt(info.n_points) + " pontos";
     $("count").innerHTML = html;
-    document.title = (uf === "BR" ? "brasiluminado" : (NAMES[uf] + " · brasiluminado"));
+    document.title = (uf === "BR" ? "brasilumen" : (NAMES[uf] + " · brasilumen"));
   }
 
   function markTiles(uf) {
