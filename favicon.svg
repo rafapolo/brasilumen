@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="4" result="wide"/>
+      <feFlood flood-color="#c47a6c"/>
+      <feComposite in2="wide" operator="in" result="halo"/>
+      <feGaussianBlur in="SourceAlpha" stdDeviation="1.2" result="near"/>
+      <feFlood flood-color="#ffd6aa"/>
+      <feComposite in2="near" operator="in" result="rim"/>
+      <feMerge><feMergeNode in="halo"/><feMergeNode in="halo"/><feMergeNode in="halo"/><feMergeNode in="rim"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect width="64" height="64" rx="12" fill="#000"/>
+  <g filter="url(#glow)"><g fill="#ede3d1" transform="translate(5.99 46.40) scale(0.04364 -0.04364)">
+    <path transform="translate(0 0)" d="M69 0V660H354Q416 660 465.5 649.5Q515 639 550.0 617.5Q585 596 603.5 562.5Q622 529 622 483Q622 444 605.5 415.0Q589 386 554.0 368.0Q519 350 461 344V327Q557 321 603.0 281.0Q649 241 649 173Q649 115 618.0 77.0Q587 39 527.0 19.5Q467 0 379 0ZM223 128H373Q434 128 463.0 145.5Q492 163 492 201Q492 243 457.0 264.0Q422 285 350 285H223ZM223 383H328Q399 383 432.0 402.5Q465 422 465 461Q465 499 434.5 516.5Q404 534 342 534H223Z"/> <path transform="translate(692 0)" d="M62 0V245V528H194L197 349H217Q224 419 243.5 460.5Q263 502 299.5 521.0Q336 540 390 540Q398 540 408.0 539.5Q418 539 431 537L425 365Q409 373 390.5 375.5Q372 378 358 378Q319 378 290.5 363.0Q262 348 245.5 317.0Q229 286 224 239V0Z"/>
+  </g></g>
+</svg>
