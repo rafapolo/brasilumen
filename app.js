@@ -4,16 +4,15 @@
   // ---------------------------------------------------------------------------
   // Look. Dot color and radius come from the kepler.gl config the original RJ
   // map was made with (color [139,87,79], radius 3). kepler scales its radius
-  // before handing it to deck.gl; 1/3 matches its rendered dot size, measured
-  // against the reference screenshots.
+  // before drawing; 1/3 matches its rendered dot size, measured against the
+  // reference screenshots. Radius is in CSS pixels.
   var DOT_COLOR = [139, 87, 79];
   var BASE_RADIUS = 3 / 3;
   var TILT = 50;
   var TILT_ZOOM_OUT = 0.45;
   var MAX_ZOOM = 15;
 
-  // Zoom-driven dot geometry. With radiusUnits:"pixels" a dot keeps its screen
-  // size while points spread 2x per zoom level, so one fixed tuning only looks
+  // Zoom-driven dot geometry. A dot keeps its screen size while points spread 2x per zoom level, so one fixed tuning only looks
   // right at one zoom. t=0 is the place's minZoom (dense glow, the
   // kepler-matched defaults); t=1 is max zoom (each dot a visible lamp).
   // radius is linear in t; alpha is geometric, because additive light is read
@@ -56,7 +55,7 @@
 
   var meta = null;
   var map = null;
-  var overlay = null;
+  var points = null;       // the map layer that draws the dots
   var current = null;      // uf whose points are on screen
   var requested = null;    // uf the user last asked for
   var tilted = true;
@@ -75,6 +74,7 @@
       cache.forEach(function (_, k) { if (!oldest && k !== "BR" && k !== uf) oldest = k; });
       if (!oldest) break;
       cache.delete(oldest);
+      if (points) points.forget(oldest);
     }
   }
 
@@ -91,7 +91,7 @@
     if (!p) return;
     if (d.progress !== undefined) { p.onProgress(d.progress); return; }
     delete pending[d.id];
-    if (d.ok) p.resolve({ n: d.n, positions: d.positions });
+    if (d.ok) p.resolve({ n: d.n, positions: d.positions, origin: d.origin });
     else p.reject(new Error(d.error));
   };
 
@@ -105,14 +105,7 @@
       pending[id] = { resolve: resolve, reject: reject, onProgress: onProgress };
       worker.postMessage({ id: id, url: url });
     }).then(function (pts) {
-      // binaryData must be a stable object: a fresh wrapper makes deck.gl
-      // re-upload millions of positions on every rebuild (and we rebuild per
-      // zoom frame).
-      var data = {
-        uf: uf,
-        n: pts.n,
-        binary: { length: pts.n, attributes: { getPosition: { value: pts.positions, size: 2 } } },
-      };
+      var data = { uf: uf, n: pts.n, positions: pts.positions, origin: pts.origin };
       remember(uf, data);
       return data;
     });
@@ -129,26 +122,134 @@
   // ---------------------------------------------------------------------------
   // Layer
 
-  // deck.gl multiplies vertex alpha (opacidade, 8-bit) by the layer `opacity`
-  // prop (brilho, a float that can exceed 1) before additive blending sums the
-  // dots. brilho therefore sets how many stacked dots it takes to reach white.
-  function buildLayer(data, alpha, gain, radius) {
-    return new deck.ScatterplotLayer({
-      id: "pts-" + data.uf,
-      data: data.binary,
-      getFillColor: DOT_COLOR.concat([Math.round(255 * alpha)]),
-      getRadius: BASE_RADIUS * radius,
-      radiusUnits: "pixels",
-      opacity: gain,
-      pickable: false,
-      billboard: true, // camera-facing dots, like kepler; flat discs smear under tilt
-      parameters: {
-        blend: true,
-        blendFunc: [WebGLRenderingContext.SRC_ALPHA, WebGLRenderingContext.ONE],
-        blendEquation: WebGLRenderingContext.FUNC_ADD,
-        depthTest: false,
+  // The dots are drawn by a small MapLibre custom layer: one GL point per
+  // establishment, straight into the map's own canvas. deck.gl's
+  // ScatterplotLayer drew the same picture but ran at ~3 fps on SP's 3.3M dots
+  // (an M4, Chrome); plain GL points draw it >10x faster.
+  //
+  // It reproduces ScatterplotLayer's dot exactly:
+  // - a camera-facing disc of radius R CSS pixels (kepler's look; flat discs
+  //   would smear into ellipses under the tilt),
+  // - antialiased by smoothstep(d - 0.5, d + 0.5, R) on the distance d from the
+  //   centre, also in CSS pixels, over a sprite padded by 0.5 px,
+  // - color [139,87,79] with alpha = opacidade (rounded to 8 bits, as a vertex
+  //   color was) * brilho (a float gain that can exceed 1),
+  // - additive blending, SRC_ALPHA + ONE, on black: N stacked dots sum their
+  //   light until the channel clamps to white. brilho therefore sets how many
+  //   stacked dots it takes to reach white.
+  //
+  // Positions arrive from the worker as Web Mercator offsets from a per-file
+  // origin, so float32 keeps sub-pixel precision at max zoom; the origin is
+  // folded into the matrix in float64 here.
+  var VS = [
+    "attribute vec2 a_pos;",
+    "uniform mat4 u_matrix;",
+    "uniform float u_size;",
+    "void main() {",
+    "  gl_Position = u_matrix * vec4(a_pos, 0.0, 1.0);",
+    "  gl_PointSize = u_size;",
+    "}",
+  ].join("\n");
+
+  var FS = [
+    "precision mediump float;",
+    "uniform vec4 u_color;",
+    "uniform float u_radius;",   // R, CSS px
+    "uniform float u_extent;",   // R + 0.5, the sprite's half-size in CSS px
+    "void main() {",
+    "  float d = length(gl_PointCoord * 2.0 - 1.0) * u_extent;",
+    "  float a = smoothstep(d - 0.5, d + 0.5, u_radius);",
+    "  gl_FragColor = vec4(u_color.rgb, u_color.a * a);",
+    "}",
+  ].join("\n");
+
+  function createPointsLayer() {
+    var gl = null, prog = null, loc = {};
+    var buffers = new Map();       // uf -> GL buffer
+    var data = null;
+    var params = { alpha: 0.8, gain: 1, radius: BASE_RADIUS };
+
+    function compile(type, src) {
+      var sh = gl.createShader(type);
+      gl.shaderSource(sh, src);
+      gl.compileShader(sh);
+      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh));
+      return sh;
+    }
+
+    function bufferFor(d) {
+      var buf = buffers.get(d.uf);
+      if (!buf) {
+        buf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+        gl.bufferData(gl.ARRAY_BUFFER, d.positions, gl.STATIC_DRAW);
+        buffers.set(d.uf, buf);
+      }
+      return buf;
+    }
+
+    return {
+      id: "pontos",
+      type: "custom",
+      renderingMode: "2d",
+
+      onAdd: function (map, context) {
+        gl = context;
+        prog = gl.createProgram();
+        gl.attachShader(prog, compile(gl.VERTEX_SHADER, VS));
+        gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FS));
+        gl.linkProgram(prog);
+        if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+        ["a_pos"].forEach(function (k) { loc[k] = gl.getAttribLocation(prog, k); });
+        ["u_matrix", "u_size", "u_color", "u_radius", "u_extent"].forEach(function (k) {
+          loc[k] = gl.getUniformLocation(prog, k);
+        });
       },
-    });
+
+      render: function (gl, matrix) {
+        if (!data) return;
+        // matrix maps Mercator [0,1] to clip space; shift it to our origin.
+        var ox = data.origin[0], oy = data.origin[1], m = new Float32Array(16);
+        for (var i = 0; i < 16; i++) m[i] = matrix[i];
+        for (var r = 0; r < 4; r++) m[12 + r] = matrix[r] * ox + matrix[4 + r] * oy + matrix[12 + r];
+
+        var dpr = map.getPixelRatio ? map.getPixelRatio() : window.devicePixelRatio || 1;
+        var R = params.radius, extent = R + 0.5;
+
+        gl.useProgram(prog);
+        gl.bindBuffer(gl.ARRAY_BUFFER, bufferFor(data));
+        gl.enableVertexAttribArray(loc.a_pos);
+        gl.vertexAttribPointer(loc.a_pos, 2, gl.FLOAT, false, 0, 0);
+        gl.uniformMatrix4fv(loc.u_matrix, false, m);
+        gl.uniform1f(loc.u_size, 2 * extent * dpr);
+        gl.uniform1f(loc.u_radius, R);
+        gl.uniform1f(loc.u_extent, extent);
+        gl.uniform4f(loc.u_color, DOT_COLOR[0] / 255, DOT_COLOR[1] / 255, DOT_COLOR[2] / 255,
+          (Math.round(255 * params.alpha) / 255) * params.gain);
+        gl.disable(gl.DEPTH_TEST);
+        gl.disable(gl.STENCIL_TEST);
+        gl.enable(gl.BLEND);
+        gl.blendEquation(gl.FUNC_ADD);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+        gl.drawArrays(gl.POINTS, 0, data.n);
+        gl.disableVertexAttribArray(loc.a_pos);
+      },
+
+      show: function (d) { data = d; map.triggerRepaint(); },
+
+      set: function (alpha, gain, radius) {
+        params.alpha = alpha;
+        params.gain = gain;
+        params.radius = radius;
+        map.triggerRepaint();
+      },
+
+      forget: function (uf) {
+        var buf = buffers.get(uf);
+        if (buf && gl) gl.deleteBuffer(buf);
+        buffers.delete(uf);
+      },
+    };
   }
 
   var knobs = ["opacity", "brightness", "dotsize"];
@@ -186,15 +287,13 @@
     $("zoomval").textContent = z.toFixed(2);
 
     var data = current && cache.get(current);
-    if (!data || !overlay) return;
-    overlay.setProps({
-      layers: [buildLayer(
-        data,
-        clamp(knobValue("opacity"), 0.05, 1),
-        clamp(knobValue("brightness"), 0.02, 2.5) * fade,
-        Math.max(knobValue("dotsize"), 0.1)
-      )],
-    });
+    if (!data || !points) return;
+    points.show(data);
+    points.set(
+      clamp(knobValue("opacity"), 0.05, 1),
+      clamp(knobValue("brightness"), 0.02, 2.5) * fade,
+      BASE_RADIUS * Math.max(knobValue("dotsize"), 0.1)
+    );
   }
 
   // "zoom" fires many times per second during a wheel/pinch — coalesce to at
@@ -232,11 +331,17 @@
   function padding() {
     var small = window.innerWidth <= 640;
     if (small) return { top: 150, bottom: 70, left: 16, right: 16 };
-    // Keep the place clear of the picker: beside it on landscape screens,
-    // above it on portrait ones.
+    // Keep the place clear of the picker and the sliders: beside them on
+    // landscape screens, between them on portrait ones.
     var picker = $("picker").getBoundingClientRect();
+    var light = document.querySelector(".light").getBoundingClientRect();
     if (window.innerWidth > window.innerHeight) {
-      return { top: 60, bottom: 40, left: Math.min(picker.width + 50, window.innerWidth * 0.4), right: 40 };
+      return {
+        top: 60,
+        bottom: 40,
+        left: Math.min(picker.width + 50, window.innerWidth * 0.3),
+        right: Math.min(light.width + 50, window.innerWidth * 0.25),
+      };
     }
     return { top: 280, bottom: picker.height + 50, left: 40, right: 40 };
   }
@@ -459,13 +564,13 @@
           minZoom: 2,
           maxZoom: MAX_ZOOM,
           pitch: TILT,
-          antialias: true,
+          antialias: false, // the dots antialias themselves; MSAA only costs fill
           attributionControl: false,
         });
 
         map.on("load", function () {
-          overlay = new deck.MapboxOverlay({ interleaved: false, layers: [] });
-          map.addControl(overlay);
+          points = createPointsLayer();
+          map.addLayer(points);
           map.on("zoom", function () { schedule(true); });
           select(fromHash());
         });

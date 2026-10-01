@@ -48,7 +48,7 @@ button { font: inherit; color: inherit; }
   z-index: 10;
   max-width: min(440px, calc(100vw - 2 * var(--gutter)));
   padding: 14px 16px;
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(0, 0, 0, 0.82);
   border-radius: 6px;
   pointer-events: none;
 }

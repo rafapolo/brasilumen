@@ -15,14 +15,17 @@ Cada ponto é um estabelecimento com CNPJ ativo, posto no seu endereço do Censo
 
 ### Formato de `data/<uf>.bin.gz`
 
-gzip de três blocos contíguos para `n` pontos: `n` longitudes `float32`, `n` latitudes `float32`,
-`n` pesos `uint16` (little-endian). O peso não é usado pelo mapa.
+Compactado por `scripts/repack.py` a partir da saída do extrator (`n` longitudes `float32`,
+`n` latitudes `float32`, `n` pesos `uint16`): pontos numa grade de 1e-5° (~1,1 m), em ordem de
+Morton, gravados como deltas em varint e comprimidos com gzip, cerca de 3,5× menor. O peso não é
+usado pelo mapa e fica de fora. Rode `python3 scripts/repack.py` depois de extrair dados novos;
+arquivos já compactados são ignorados.
 
 ## Código
 
 Página estática, sem build: `index.html`, `app.js`, `app.css` e `worker.js` (download e
-descompressão fora da thread principal). MapLibre GL + deck.gl (`ScatterplotLayer` com mistura
-aditiva). `thumbs/` são imagens estáticas de cada UF usadas na prévia do seletor.
+decodificação fora da thread principal). MapLibre GL com uma camada WebGL própria que desenha
+cada estabelecimento como um ponto com mistura aditiva. `thumbs/` são imagens estáticas de cada UF usadas na prévia do seletor.
 
 Para rodar localmente:
 
