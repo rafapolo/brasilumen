@@ -20,10 +20,16 @@
   <link href="https://unpkg.com/maplibre-gl@3.4.0/dist/maplibre-gl.css" rel="stylesheet">
   <script src="https://unpkg.com/maplibre-gl@3.4.0/dist/maplibre-gl.js"></script>
 
-  <link rel="stylesheet" href="app.css?v=5">
+  <link rel="stylesheet" href="app.css?v=7">
 </head>
 <body>
   <div id="map" aria-label="Mapa de pontos de estabelecimentos"></div>
+
+  <div id="progress" class="progress" role="status" hidden>
+    <span class="glow" aria-hidden="true"></span>
+    <span id="progress-text"></span>
+    <div class="bar"><i id="progress-fill"></i></div>
+  </div>
 
   <header class="masthead">
     <h1 class="wordmark">brasi<span class="lit">l</span>umen</h1>
@@ -31,10 +37,6 @@
     <div class="readout" aria-live="polite">
       <span id="place" class="place">Brasil</span>
       <span id="count" class="count"></span>
-    </div>
-    <div id="progress" class="progress" hidden>
-      <div class="bar"><i id="progress-fill"></i></div>
-      <span id="progress-text"></span>
     </div>
   </header>
 
@@ -102,6 +104,6 @@
 
   <div id="error" class="error" role="alert" hidden></div>
 
-  <script src="app.js?v=7"></script>
+  <script src="app.js?v=8"></script>
 </body>
 </html>

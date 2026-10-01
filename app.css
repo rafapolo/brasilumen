@@ -107,17 +107,48 @@ button { font: inherit; color: inherit; }
 }
 
 .progress {
-  margin-top: 10px;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 9;
+  pointer-events: none;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: 14px;
   font-family: var(--mono);
-  font-size: 10px;
-  color: var(--dim);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--lamp);
+  padding: 18px 22px 16px;
+  background: var(--glass);
+  border: 1px solid var(--hair);
+  border-radius: 4px;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+/* One lamp breathing while the dots come down the wire. */
+.progress .glow {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--lamp);
+  box-shadow:
+    0 0 6px rgba(255, 214, 170, 0.9),
+    0 0 22px rgba(var(--ember-raw), 0.9),
+    0 0 48px rgba(var(--ember-raw), 0.7);
+  animation: breathe 1.6s ease-in-out infinite;
+}
+
+@keyframes breathe {
+  0%, 100% { opacity: 0.35; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.15); }
 }
 
 .progress .bar {
-  width: 120px;
+  width: 160px;
   height: 1px;
   background: var(--hair);
 }
@@ -404,8 +435,8 @@ button { font: inherit; color: inherit; }
 
 .credit {
   position: absolute;
-  right: 8px;
-  bottom: 6px;
+  right: var(--gutter);
+  bottom: var(--gutter);
   z-index: 10;
   font-family: var(--mono);
   font-size: 9px;
@@ -424,7 +455,7 @@ button { font: inherit; color: inherit; }
   .dek { display: none; }
   .readout { margin-top: 10px; }
 
-  .light { top: auto; bottom: calc(var(--gutter) + 14px); width: auto; max-width: calc(100vw - 2 * var(--gutter)); }
+  .light { top: auto; bottom: calc(var(--gutter) + 24px); width: auto; max-width: calc(100vw - 2 * var(--gutter)); }
   .chips { flex-direction: column; align-items: flex-end; }
   #light-toggle { display: block; }
   .light-panel { display: none; width: min(240px, calc(100vw - 2 * var(--gutter))); }
@@ -473,4 +504,5 @@ button { font: inherit; color: inherit; }
 
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
+  .progress .glow { animation: none; }
 }
