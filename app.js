@@ -252,9 +252,10 @@
   // TWINKLE_PX CSS pixels wide at the current zoom level, not to the dot:
   // dots stacked on one pixel would otherwise average their twinkles away.
   // Where the stack is far past white it still hides. It keeps the map
-  // repainting every frame, so it is off under reduced motion.
+  // repainting every frame, so it is off under reduced motion. The cintilar
+  // slider sets it.
   var TWINKLE_PX = 2;
-  var TWINKLE = reduceMotion ? 0 : 0.85;
+  var twinkle = 0;
 
   var VS = [
     "attribute vec2 a_pos;",
@@ -371,7 +372,7 @@
         gl.uniform1f(loc.u_radius, R);
         gl.uniform1f(loc.u_extent, extent);
         gl.uniform1f(loc.u_time, (performance.now() / 1000) % 3600);
-        gl.uniform1f(loc.u_twinkle, TWINKLE);
+        gl.uniform1f(loc.u_twinkle, twinkle);
         gl.uniform1f(loc.u_cell, TWINKLE_PX / (512 * Math.pow(2, Math.floor(map.getZoom()))));
         gl.uniform3f(loc.u_rgb, DOT_COLOR[0] / 255, DOT_COLOR[1] / 255, DOT_COLOR[2] / 255);
         gl.disable(gl.DEPTH_TEST);
@@ -384,7 +385,7 @@
         draw(data, light * mix);
         gl.disableVertexAttribArray(loc.a_pos);
         gl.disableVertexAttribArray(loc.a_count);
-        if (TWINKLE) map.triggerRepaint();
+        if (twinkle) map.triggerRepaint();
 
         function draw(d, l) {
           // matrix maps Mercator [0,1] to clip space; shift it to d's origin.
@@ -452,6 +453,14 @@
   // fromZoom: recompute from the curve and push the values into the sliders.
   // Otherwise the user just dragged one, so read the sliders as-is.
   var sharedKnobs = null;   // slider values from a shared link, see showView
+
+  // cintilar is not on the zoom curve: it stays where the user (or a shared
+  // link) left it.
+  function setTwinkle(v) {
+    setKnob("twinkle", v);
+    twinkle = reduceMotion ? 0 : v;
+    if (points) points.refresh();
+  }
 
   function apply(fromZoom) {
     if (!map) return;
@@ -650,7 +659,7 @@
     }
     var landing = fly(uf, view);
 
-    var label = "acendendo " + (uf === "BR" ? "o Brasil" : uf);
+    var label = "iluminando " + (uf === "BR" ? "o Brasil" : uf);
     var cached = cache.has(uf);
     showProgress(label, cached ? null : 0);
     // Downloaded before the camera lands: the bar holds full until it does.
@@ -675,7 +684,8 @@
   // The URL carries the place and the camera, so a link opens on the same
   // angle: #sp/12.40/-23.55012/-46.63331/15/50 is
   // place/zoom/lat/lng/bearing/pitch, optionally followed by the three
-  // sliders, /opacidade/brilho/tamanho, so the link carries the look too.
+  // sliders, /opacidade/brilho/tamanho, and then /cintilar, so the link
+  // carries the look too.
   // A bare #sp still frames the whole place.
   //
   // The zoom in the URL is for a reference screen whose short side is
@@ -691,7 +701,7 @@
     var uf = parts[0].toUpperCase();
     if (!meta[uf]) uf = "BR";
     var n = parts.slice(1).map(Number);
-    if (n.length < 3 || n.slice(0, 3).some(isNaN)) return { uf: uf, view: null, knobs: null };
+    if (n.length < 3 || n.slice(0, 3).some(isNaN)) return { uf: uf, view: null, knobs: null, twinkle: null };
     var knobs = n.length >= 8 && !n.slice(5, 8).some(isNaN) ? {
       opacity: clamp(n[5], 0.05, 1),
       brightness: clamp(n[6], 0.02, 2.5),
@@ -700,6 +710,7 @@
     return {
       uf: uf,
       knobs: knobs,
+      twinkle: knobs && n.length >= 9 && !isNaN(n[8]) ? clamp(n[8], 0, 1) : null,
       view: {
         zoom: clamp(n[0] + screenShift(), 2, MAX_ZOOM),
         center: [clamp(n[2], -180, 180), clamp(n[1], -85, 85)],
@@ -715,7 +726,7 @@
     var hash = "#" + requested.toLowerCase() + "/" + (map.getZoom() - screenShift()).toFixed(2) + "/" +
       c.lat.toFixed(5) + "/" + c.lng.toFixed(5) + "/" +
       Math.round(map.getBearing()) + "/" + Math.round(map.getPitch()) + "/" +
-      knobs.map(function (name) { return knobValue(name).toFixed(2); }).join("/");
+      knobs.concat("twinkle").map(function (name) { return knobValue(name).toFixed(2); }).join("/");
     if (location.hash !== hash) history.replaceState(null, "", hash);
   }
 
@@ -739,6 +750,7 @@
   function showView(h) {
     if (h.view) setTilted(h.view.pitch > 0);
     sharedKnobs = h.view && h.knobs ? Object.assign({ zoom: h.view.zoom }, h.knobs) : null;
+    if (h.twinkle !== null) setTwinkle(h.twinkle);
     return h.view;
   }
 
@@ -845,6 +857,13 @@
         schedule(false);
         writeHashSoon();
       });
+    });
+
+    $("twinkle").disabled = reduceMotion;
+    setTwinkle(knobValue("twinkle"));
+    $("twinkle").addEventListener("input", function () {
+      setTwinkle(+this.value);
+      writeHashSoon();
     });
 
     $("tilt").addEventListener("click", function () {
