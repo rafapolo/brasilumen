@@ -650,9 +650,10 @@
     requested = uf;
     markTiles(uf);
     setReadout(uf);
-    // Fly over the whole-country sample, so the path between two states is
-    // lit instead of black; the place's own points light up on arrival.
-    if (current && current !== "BR" && current !== uf && cache.has("BR")) {
+    // Going back to Brasil, the country lights up as the camera pulls away.
+    // Between two states it does not: the one left behind stays lit for the
+    // flight and fades out as the new one lights up on arrival.
+    if (uf === "BR" && current && current !== "BR" && cache.has("BR")) {
       var left = current;
       current = "BR";
       lightUp(left);
