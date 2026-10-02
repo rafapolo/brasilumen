@@ -246,16 +246,40 @@
   // the old SRC_ALPHA + ONE with alpha = light * coverage for a single dot.
   var LOD_MAX_PX = 0.3;
 
+  // Twinkle: the light drifts around its value, by up to TWINKLE of it, on a
+  // phase and period (about 1 to 2.5 s) of its own, like city lights seen
+  // from a plane. The phase belongs to the ground cell a dot falls in, about
+  // TWINKLE_PX CSS pixels wide at the current zoom level, not to the dot:
+  // dots stacked on one pixel would otherwise average their twinkles away.
+  // Where the stack is far past white it still hides. It keeps the map
+  // repainting every frame, so it is off under reduced motion.
+  var TWINKLE_PX = 2;
+  var TWINKLE = reduceMotion ? 0 : 0.85;
+
   var VS = [
     "attribute vec2 a_pos;",
     "attribute float a_count;",
     "uniform mat4 u_matrix;",
     "uniform float u_size;",
+    "uniform float u_time;",     // seconds
+    "uniform float u_twinkle;",
+    "uniform float u_cell;",     // twinkle cell, in Mercator units
     "varying float v_count;",
+    "float hash(vec2 p) {",
+    "  vec3 q = fract(vec3(p.xyx) * 0.1031);",
+    "  q += dot(q, q.yzx + 33.33);",
+    "  return fract((q.x + q.y) * q.z);",
+    "}",
     "void main() {",
     "  gl_Position = u_matrix * vec4(a_pos, 0.0, 1.0);",
     "  gl_PointSize = u_size;",
-    "  v_count = min(a_count, 60000.0);",  // stays finite in mediump; white long before
+    // Two unrelated numbers per cell: phase and pace.
+    "  vec2 cell = floor(a_pos / u_cell);",
+    "  float h = hash(cell);",
+    "  float g = hash(cell + 71.3);",
+    "  float w = 2.5 + 4.0 * g;",
+    "  float tw = 1.0 + u_twinkle * sin(u_time * w + 6.2832 * h) * (0.7 + 0.3 * sin(u_time * w * 0.31 + 6.2832 * g));",
+    "  v_count = min(a_count, 60000.0) * tw;",  // stays finite in mediump; white long before
     "}",
   ].join("\n");
 
@@ -331,7 +355,7 @@
         gl.linkProgram(prog);
         if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
         ["a_pos", "a_count"].forEach(function (k) { loc[k] = gl.getAttribLocation(prog, k); });
-        ["u_matrix", "u_size", "u_rgb", "u_light", "u_radius", "u_extent"].forEach(function (k) {
+        ["u_matrix", "u_size", "u_rgb", "u_light", "u_radius", "u_extent", "u_time", "u_twinkle", "u_cell"].forEach(function (k) {
           loc[k] = gl.getUniformLocation(prog, k);
         });
       },
@@ -346,6 +370,9 @@
         gl.uniform1f(loc.u_size, 2 * extent * dpr);
         gl.uniform1f(loc.u_radius, R);
         gl.uniform1f(loc.u_extent, extent);
+        gl.uniform1f(loc.u_time, (performance.now() / 1000) % 3600);
+        gl.uniform1f(loc.u_twinkle, TWINKLE);
+        gl.uniform1f(loc.u_cell, TWINKLE_PX / (512 * Math.pow(2, Math.floor(map.getZoom()))));
         gl.uniform3f(loc.u_rgb, DOT_COLOR[0] / 255, DOT_COLOR[1] / 255, DOT_COLOR[2] / 255);
         gl.disable(gl.DEPTH_TEST);
         gl.disable(gl.STENCIL_TEST);
@@ -357,6 +384,7 @@
         draw(data, light * mix);
         gl.disableVertexAttribArray(loc.a_pos);
         gl.disableVertexAttribArray(loc.a_count);
+        if (TWINKLE) map.triggerRepaint();
 
         function draw(d, l) {
           // matrix maps Mercator [0,1] to clip space; shift it to d's origin.
