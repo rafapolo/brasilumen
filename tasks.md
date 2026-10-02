@@ -17,3 +17,16 @@ Marcadas com * as que pedem dados que os arquivos de pontos ainda não trazem (a
 - [ ] **Mapa de calor dos fechamentos\*:** CNPJs baixados nos últimos anos em vermelho, para ver onde o comércio apagou.
 - [ ] **Vídeo da URL compartilhada:** gerar um GIF ou MP4 curto do voo do Brasil até o ângulo do link, para redes sociais.
 - [ ] **Camada do Distrito Federal e de municípios:** completar o DF, que hoje não tem arquivo, e permitir abrir uma cidade como se fosse um "estado".
+
+## Animações
+
+Na linha do loading entre lugares e do resto do país apagando ao abrir um estado.
+
+- [ ] **Onda a partir do pouso:** ao chegar num estado, a luz se espalha em círculo a partir do centro da tela (ou da capital), em vez de acender tudo de uma vez; um limiar por distância no shader.
+- [ ] **Metrópoles primeiro:** os pontos acendem em ordem de densidade, as capitais brancas antes e o interior chegando aos poucos, usando a contagem que os níveis agrupados já trazem.
+- [ ] **Cintilar de avião:** uma variação mínima e lenta de brilho por ponto, como luzes de cidade vistas da janela à noite; desligada com movimento reduzido.
+- [ ] **Anoitecer na abertura:** na primeira carga o Brasil acende de leste a oeste, como a linha do pôr do sol passando pelo país.
+- [ ] **Pulso de pouso:** um clarão suave de brilho no instante em que a câmera assenta no fim do voo, como a cidade respondendo à chegada.
+- [ ] **Números que contam:** a contagem de estabelecimentos rola do valor anterior até o novo ao trocar de lugar, no ritmo do fade dos pontos.
+- [ ] **Seletor em cascata:** na abertura os quadrados dos estados acendem do norte para o sul, cada um com o brilho do seu total.
+- [ ] **Órbita ociosa:** depois de um tempo sem mexer, a câmera gira bem devagar em torno do centro na vista inclinada, parando ao primeiro toque.
