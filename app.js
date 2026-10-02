@@ -123,6 +123,7 @@
   var requested = null;    // uf the user last asked for
   var tilted = true;
   var fade = 1;            // 0..1 ramp applied to the gain when points arrive
+  var fadeFrom = null;     // uf whose points fade out as `current` fades in
 
   // Decoded point sets, so going back to a state is instant. Keeps the few
   // most recent; BR stays because it is the home view.
@@ -188,13 +189,28 @@
     });
   }
 
+  // The loader stays up for the whole change of place, flight included, and
+  // fades out as the place's lights come on. frac null means nothing to
+  // download (the place is cached), so the bar sweeps instead of filling.
+  var progressTimer = 0;
+
   function showProgress(label, frac) {
-    $("progress").hidden = false;
-    $("progress-fill").style.width = Math.round(frac * 100) + "%";
-    $("progress-text").textContent = label + " " + Math.round(frac * 100) + "%";
+    var el = $("progress");
+    clearTimeout(progressTimer);
+    el.hidden = false;
+    el.classList.remove("out");
+    el.classList.toggle("busy", frac === null);
+    $("progress-fill").style.width = frac === null ? "" : Math.round(frac * 100) + "%";
+    $("progress-text").textContent = frac === null ? label : label + " " + Math.round(frac * 100) + "%";
   }
 
-  function hideProgress() { $("progress").hidden = true; }
+  function hideProgress(now) {
+    var el = $("progress");
+    clearTimeout(progressTimer);
+    if (now || reduceMotion) { el.hidden = true; return; }
+    el.classList.add("out");
+    progressTimer = setTimeout(function () { el.hidden = true; }, 700);
+  }
 
   // ---------------------------------------------------------------------------
   // Layer
@@ -264,7 +280,8 @@
   function createPointsLayer() {
     var gl = null, prog = null, loc = {};
     var buffers = new Map();       // uf + level -> GL buffer
-    var data = null;
+    var data = null, prev = null;  // prev fades out under data, see lightUp
+    var mix = 1;                   // data's share of the light; prev gets 1 - mix
     var params = { alpha: 0.8, gain: 1, radius: BASE_RADIUS };
 
     function compile(type, src) {
@@ -321,45 +338,52 @@
 
       render: function (gl, matrix) {
         if (!data) return;
-        // matrix maps Mercator [0,1] to clip space; shift it to our origin.
-        var ox = data.origin[0], oy = data.origin[1], m = new Float32Array(16);
-        for (var i = 0; i < 16; i++) m[i] = matrix[i];
-        for (var r = 0; r < 4; r++) m[12 + r] = matrix[r] * ox + matrix[4 + r] * oy + matrix[12 + r];
-
         var dpr = map.getPixelRatio ? map.getPixelRatio() : window.devicePixelRatio || 1;
         var R = params.radius, extent = R + 0.5;
-        var level = pickLevel(data, map.getZoom(), dpr, map.getPitch());
+        var light = (Math.round(255 * params.alpha) / 255) * params.gain;
 
         gl.useProgram(prog);
-        gl.enableVertexAttribArray(loc.a_pos);
-        if (level) {
-          gl.bindBuffer(gl.ARRAY_BUFFER, bufferFor(data.uf + ":" + level.k, level.data));
-          gl.vertexAttribPointer(loc.a_pos, 2, gl.FLOAT, false, 12, 0);
-          gl.enableVertexAttribArray(loc.a_count);
-          gl.vertexAttribPointer(loc.a_count, 1, gl.FLOAT, false, 12, 8);
-        } else {
-          gl.bindBuffer(gl.ARRAY_BUFFER, bufferFor(data.uf, data.positions));
-          gl.vertexAttribPointer(loc.a_pos, 2, gl.FLOAT, false, 0, 0);
-          gl.disableVertexAttribArray(loc.a_count);
-          gl.vertexAttrib1f(loc.a_count, 1);
-        }
-        gl.uniformMatrix4fv(loc.u_matrix, false, m);
         gl.uniform1f(loc.u_size, 2 * extent * dpr);
         gl.uniform1f(loc.u_radius, R);
         gl.uniform1f(loc.u_extent, extent);
         gl.uniform3f(loc.u_rgb, DOT_COLOR[0] / 255, DOT_COLOR[1] / 255, DOT_COLOR[2] / 255);
-        gl.uniform1f(loc.u_light, (Math.round(255 * params.alpha) / 255) * params.gain);
         gl.disable(gl.DEPTH_TEST);
         gl.disable(gl.STENCIL_TEST);
         gl.enable(gl.BLEND);
         gl.blendEquation(gl.FUNC_ADD);
         gl.blendFunc(gl.ONE, gl.ONE);
-        gl.drawArrays(gl.POINTS, 0, level ? level.n : data.n);
+        // Additive light: the two sets of a crossfade simply sum.
+        if (prev && prev !== data && mix < 1) draw(prev, light * (1 - mix));
+        draw(data, light * mix);
         gl.disableVertexAttribArray(loc.a_pos);
         gl.disableVertexAttribArray(loc.a_count);
+
+        function draw(d, l) {
+          // matrix maps Mercator [0,1] to clip space; shift it to d's origin.
+          var ox = d.origin[0], oy = d.origin[1], m = new Float32Array(16);
+          for (var i = 0; i < 16; i++) m[i] = matrix[i];
+          for (var r = 0; r < 4; r++) m[12 + r] = matrix[r] * ox + matrix[4 + r] * oy + matrix[12 + r];
+          var level = pickLevel(d, map.getZoom(), dpr, map.getPitch());
+
+          gl.enableVertexAttribArray(loc.a_pos);
+          if (level) {
+            gl.bindBuffer(gl.ARRAY_BUFFER, bufferFor(d.uf + ":" + level.k, level.data));
+            gl.vertexAttribPointer(loc.a_pos, 2, gl.FLOAT, false, 12, 0);
+            gl.enableVertexAttribArray(loc.a_count);
+            gl.vertexAttribPointer(loc.a_count, 1, gl.FLOAT, false, 12, 8);
+          } else {
+            gl.bindBuffer(gl.ARRAY_BUFFER, bufferFor(d.uf, d.positions));
+            gl.vertexAttribPointer(loc.a_pos, 2, gl.FLOAT, false, 0, 0);
+            gl.disableVertexAttribArray(loc.a_count);
+            gl.vertexAttrib1f(loc.a_count, 1);
+          }
+          gl.uniformMatrix4fv(loc.u_matrix, false, m);
+          gl.uniform1f(loc.u_light, l);
+          gl.drawArrays(gl.POINTS, 0, level ? level.n : d.n);
+        }
       },
 
-      show: function (d) { data = d; map.triggerRepaint(); },
+      show: function (d, from, k) { data = d; prev = from || null; mix = from ? k : 1; map.triggerRepaint(); },
 
       refresh: function () { map.triggerRepaint(); },
 
@@ -418,10 +442,10 @@
 
     var data = current && cache.get(current);
     if (!data || !points) return;
-    points.show(data);
+    points.show(data, fadeFrom && cache.get(fadeFrom), fade);
     points.set(
       clamp(knobValue("opacity"), 0.05, 1),
-      clamp(knobValue("brightness"), 0.02, 2.5) * fade,
+      clamp(knobValue("brightness"), 0.02, 2.5),
       BASE_RADIUS * Math.max(knobValue("dotsize"), 0.1)
     );
   }
@@ -442,14 +466,22 @@
   }
 
   // The lights come on: ramp the gain from 0 when a new point set lands.
-  function lightUp() {
-    if (reduceMotion) { fade = 1; schedule(false); return; }
+  // With from, that place's points fade out meanwhile: landing on a state
+  // over the Brasil sample, the state stays lit and the rest of the country
+  // goes dark.
+  var lightRun = 0;
+  function lightUp(from) {
+    var run = ++lightRun;
+    fadeFrom = from && from !== current ? from : null;
+    if (reduceMotion) { fade = 1; fadeFrom = null; schedule(false); return; }
     var start = performance.now();
     var DURATION = 1400;
     fade = 0;
     (function step(now) {
+      if (run !== lightRun) return;
       var k = clamp((now - start) / DURATION, 0, 1);
       fade = k * k * (3 - 2 * k);
+      if (k === 1) fadeFrom = null;
       apply(false);
       if (k < 1) requestAnimationFrame(step);
     })(start);
@@ -584,27 +616,30 @@
     // Fly over the whole-country sample, so the path between two states is
     // lit instead of black; the place's own points light up on arrival.
     if (current && current !== "BR" && current !== uf && cache.has("BR")) {
+      var left = current;
       current = "BR";
-      apply(false);
+      lightUp(left);
     }
     var landing = fly(uf, view);
 
     var label = "acendendo " + (uf === "BR" ? "o Brasil" : uf);
     var cached = cache.has(uf);
-    if (!cached) showProgress(label, 0);
+    showProgress(label, cached ? null : 0);
+    // Downloaded before the camera lands: the bar holds full until it does.
     var loading = loadPoints(uf, function (f) { if (requested === uf) showProgress(label, f); })
-      .then(function (data) { if (requested === uf) hideProgress(); return data; });
+      .then(function (data) { if (requested === uf && !cached) showProgress(label, 1); return data; });
     Promise.all([loading, landing])
       .then(function () {
         if (requested !== uf) return;
-        var changed = current !== uf;
+        var changed = current !== uf, from = current;
         current = uf;
         apply(true);
-        if (changed && uf !== "BR") lightUp();
+        hideProgress();
+        if (changed) lightUp(from);
       })
       .catch(function (err) {
         if (requested !== uf) return;
-        hideProgress();
+        hideProgress(true);
         showError("Não foi possível carregar " + (NAMES[uf] || uf) + ": " + err.message + ". Recarregue a página para tentar de novo.");
       });
   }

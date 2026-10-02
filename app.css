@@ -127,6 +127,14 @@ button { font: inherit; color: inherit; }
   border-radius: 4px;
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
+  animation: progress-in 250ms ease-out;
+  transition: opacity 700ms ease;
+}
+
+.progress.out { opacity: 0; }
+
+@keyframes progress-in {
+  from { opacity: 0; }
 }
 
 /* One lamp breathing while the dots come down the wire. */
@@ -160,6 +168,18 @@ button { font: inherit; color: inherit; }
   background: var(--lamp);
   box-shadow: 0 0 6px rgba(255, 214, 170, 0.8);
   transition: width 80ms linear;
+}
+
+/* Nothing to download: a short light runs along the wire instead. */
+.progress.busy .bar i {
+  width: 30%;
+  transition: none;
+  animation: sweep 1.1s ease-in-out infinite alternate;
+}
+
+@keyframes sweep {
+  from { transform: translateX(0); }
+  to { transform: translateX(233%); }
 }
 
 /* ---------- state picker ---------- */
@@ -504,5 +524,6 @@ button { font: inherit; color: inherit; }
 
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
-  .progress .glow { animation: none; }
+  .progress, .progress .glow { animation: none; }
+  .progress.busy .bar i { width: 100%; animation: none; }
 }
