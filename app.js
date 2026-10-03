@@ -12,6 +12,18 @@
   var TILT_ZOOM_OUT = 0.45;
   var MAX_ZOOM = 15;
 
+  // Linha do tempo: the slider runs over the year an establishment opened.
+  // Files store it as years since 1900 (older openings are floored there); the
+  // newest in the Receita snapshot is 2025, which is where the slider rests.
+  // Zooming into the Brasil sample (a fraction of the points) opens the state
+  // under the centre of the screen at its full density, as if its tile had been
+  // clicked, and panning on into a neighbour opens that one.
+  var DETAIL_ZOOM = 7;
+  var PREFETCH_ZOOM = 5.5;
+
+  var TL_MIN = 1900;
+  var TL_MAX = 2025;
+
   // Zoom-driven light. A dot keeps its screen size while the points spread 2x
   // per zoom level, so how many dots pile onto one pixel, and therefore how
   // fast additive light burns to white, depends on the ABSOLUTE zoom, the same
@@ -147,7 +159,7 @@
 
   // Versioned so a cached worker never pairs with a newer app.js (GitHub
   // Pages caches for 10 min). Bump together with the ?v= in index.html.
-  var worker = new Worker("worker.js?v=4");
+  var worker = new Worker("worker.js?v=5");
   var nextId = 0;
   var pending = {};
 
@@ -168,7 +180,7 @@
     if (!p) return;
     if (d.progress !== undefined) { p.onProgress(d.progress); return; }
     delete pending[d.id];
-    if (d.ok) p.resolve({ id: d.id, n: d.n, positions: d.positions, origin: d.origin, q: d.q });
+    if (d.ok) p.resolve({ id: d.id, n: d.n, positions: d.positions, origin: d.origin, q: d.q, years: d.years, hist: d.hist, hasYears: d.hasYears });
     else p.reject(new Error(d.error));
   };
 
@@ -182,7 +194,10 @@
       pending[id] = { resolve: resolve, reject: reject, onProgress: onProgress };
       worker.postMessage({ id: id, url: url });
     }).then(function (pts) {
-      var data = { uf: uf, n: pts.n, positions: pts.positions, origin: pts.origin, q: pts.q, levels: [] };
+      var data = {
+        uf: uf, n: pts.n, positions: pts.positions, origin: pts.origin, q: pts.q, levels: [],
+        years: pts.years, hist: pts.hist, hasYears: pts.hasYears,
+      };
       remember(uf, data);
       levelsFor[pts.id] = uf;
       return data;
@@ -260,6 +275,8 @@
   var VS = [
     "attribute vec2 a_pos;",
     "attribute float a_count;",
+    "attribute float a_year;",   // opened, years since 1900
+    "uniform float u_year;",     // the timeline, same unit; fractional while it eases
     "uniform mat4 u_matrix;",
     "uniform float u_size;",
     "uniform float u_time;",     // seconds
@@ -272,6 +289,10 @@
     "  return fract((q.x + q.y) * q.z);",
     "}",
     "void main() {",
+    // A dot fades in over the year after it opens; before that it is skipped
+    // outright, off screen, so the hidden ones cost no fragments.
+    "  float born = clamp(u_year - a_year + 1.0, 0.0, 1.0);",
+    "  if (born <= 0.0) { v_count = 0.0; gl_PointSize = 0.0; gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }",
     "  gl_Position = u_matrix * vec4(a_pos, 0.0, 1.0);",
     "  gl_PointSize = u_size;",
     // Two unrelated numbers per cell: phase and pace.
@@ -280,7 +301,7 @@
     "  float g = hash(cell + 71.3);",
     "  float w = 2.5 + 4.0 * g;",
     "  float tw = 1.0 + u_twinkle * sin(u_time * w + 6.2832 * h) * (0.7 + 0.3 * sin(u_time * w * 0.31 + 6.2832 * g));",
-    "  v_count = min(a_count, 60000.0) * tw;",  // stays finite in mediump; white long before
+    "  v_count = min(a_count, 60000.0) * tw * born;",  // stays finite in mediump; white long before
     "}",
   ].join("\n");
 
@@ -307,7 +328,7 @@
     var buffers = new Map();       // uf + level -> GL buffer
     var data = null, prev = null;  // prev fades out under data, see lightUp
     var mix = 1;                   // data's share of the light; prev gets 1 - mix
-    var params = { alpha: 0.8, gain: 1, radius: BASE_RADIUS };
+    var params = { alpha: 0.8, gain: 1, radius: BASE_RADIUS, year: TL_MAX - 1900, yearMax: TL_MAX - 1900 };
 
     function compile(type, src) {
       var sh = gl.createShader(type);
@@ -355,8 +376,8 @@
         gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FS));
         gl.linkProgram(prog);
         if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
-        ["a_pos", "a_count"].forEach(function (k) { loc[k] = gl.getAttribLocation(prog, k); });
-        ["u_matrix", "u_size", "u_rgb", "u_light", "u_radius", "u_extent", "u_time", "u_twinkle", "u_cell"].forEach(function (k) {
+        ["a_pos", "a_count", "a_year"].forEach(function (k) { loc[k] = gl.getAttribLocation(prog, k); });
+        ["u_matrix", "u_size", "u_rgb", "u_light", "u_radius", "u_extent", "u_time", "u_twinkle", "u_cell", "u_year"].forEach(function (k) {
           loc[k] = gl.getUniformLocation(prog, k);
         });
       },
@@ -373,6 +394,7 @@
         gl.uniform1f(loc.u_extent, extent);
         gl.uniform1f(loc.u_time, (performance.now() / 1000) % 3600);
         gl.uniform1f(loc.u_twinkle, twinkle);
+        gl.uniform1f(loc.u_year, params.year);
         gl.uniform1f(loc.u_cell, TWINKLE_PX / (512 * Math.pow(2, Math.floor(map.getZoom()))));
         gl.uniform3f(loc.u_rgb, DOT_COLOR[0] / 255, DOT_COLOR[1] / 255, DOT_COLOR[2] / 255);
         gl.disable(gl.DEPTH_TEST);
@@ -385,6 +407,7 @@
         draw(data, light * mix);
         gl.disableVertexAttribArray(loc.a_pos);
         gl.disableVertexAttribArray(loc.a_count);
+        gl.disableVertexAttribArray(loc.a_year);
         if (twinkle) map.triggerRepaint();
 
         function draw(d, l) {
@@ -392,7 +415,9 @@
           var ox = d.origin[0], oy = d.origin[1], m = new Float32Array(16);
           for (var i = 0; i < 16; i++) m[i] = matrix[i];
           for (var r = 0; r < 4; r++) m[12 + r] = matrix[r] * ox + matrix[4 + r] * oy + matrix[12 + r];
-          var level = pickLevel(d, map.getZoom(), dpr, map.getPitch());
+          // A merged dot cannot say how many of its points existed in a given
+          // year, so while the timeline is cut short the points draw one by one.
+          var level = params.year >= params.yearMax ? pickLevel(d, map.getZoom(), dpr, map.getPitch()) : null;
 
           gl.enableVertexAttribArray(loc.a_pos);
           if (level) {
@@ -400,11 +425,16 @@
             gl.vertexAttribPointer(loc.a_pos, 2, gl.FLOAT, false, 12, 0);
             gl.enableVertexAttribArray(loc.a_count);
             gl.vertexAttribPointer(loc.a_count, 1, gl.FLOAT, false, 12, 8);
+            gl.disableVertexAttribArray(loc.a_year);
+            gl.vertexAttrib1f(loc.a_year, 0);
           } else {
             gl.bindBuffer(gl.ARRAY_BUFFER, bufferFor(d.uf, d.positions));
             gl.vertexAttribPointer(loc.a_pos, 2, gl.FLOAT, false, 0, 0);
             gl.disableVertexAttribArray(loc.a_count);
             gl.vertexAttrib1f(loc.a_count, 1);
+            gl.bindBuffer(gl.ARRAY_BUFFER, bufferFor(d.uf + ":y", d.years));
+            gl.enableVertexAttribArray(loc.a_year);
+            gl.vertexAttribPointer(loc.a_year, 1, gl.UNSIGNED_BYTE, false, 0, 0);
           }
           gl.uniformMatrix4fv(loc.u_matrix, false, m);
           gl.uniform1f(loc.u_light, l);
@@ -415,6 +445,13 @@
       show: function (d, from, k) { data = d; prev = from || null; mix = from ? k : 1; map.triggerRepaint(); },
 
       refresh: function () { map.triggerRepaint(); },
+
+      // year in years since 1900; at yearMax nothing is hidden.
+      setYear: function (year, yearMax) {
+        params.year = year;
+        params.yearMax = yearMax;
+        map.triggerRepaint();
+      },
 
       set: function (alpha, gain, radius) {
         params.alpha = alpha;
@@ -485,6 +522,7 @@
       clamp(knobValue("brightness"), 0.02, 2.5),
       BASE_RADIUS * Math.max(knobValue("dotsize"), 0.1)
     );
+    points.setYear(tl.shown - TL_MIN, TL_MAX - TL_MIN);
   }
 
   // "zoom" fires many times per second during a wheel/pinch — coalesce to at
@@ -529,7 +567,7 @@
 
   function padding() {
     var small = window.innerWidth <= 640;
-    if (small) return { top: 150, bottom: 70, left: 16, right: 16 };
+    if (small) return { top: 150, bottom: 150, left: 16, right: 16 };
     // Keep the place clear of the picker and the sliders: beside them on
     // landscape screens, between them on portrait ones.
     var picker = $("picker").getBoundingClientRect();
@@ -537,12 +575,12 @@
     if (window.innerWidth > window.innerHeight) {
       return {
         top: 60,
-        bottom: 40,
+        bottom: 120,
         left: Math.min(picker.width + 50, window.innerWidth * 0.3),
         right: Math.min(light.width + 50, window.innerWidth * 0.25),
       };
     }
-    return { top: 280, bottom: picker.height + 50, left: 40, right: 40 };
+    return { top: 280, bottom: Math.max(picker.height, 100) + 50, left: 40, right: 40 };
   }
 
   function cameraFor(uf) {
@@ -560,6 +598,7 @@
   // less to fit (BR fits at ~3.7). Lowered first so the flight is not clamped,
   // then settled once the camera arrives.
   var flight = 0;
+  var traveling = 0;       // flights under way; the camera is not the user's then
 
   function easeInOutCubic(t) { return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; }
   // Ends a touch past 1 and comes back: the camera lands, then seats.
@@ -577,7 +616,8 @@
     // it into a fast low pan, so open it all the way for the flight.
     map.setMinZoom(Math.min(map.getMinZoom(), 2));
 
-    return new Promise(function (resolve) {
+    traveling++;
+    var trip = new Promise(function (resolve) {
       // Never clamp below where the camera is: a flight cut short mid-arc
       // would otherwise snap.
       function settle() {
@@ -618,6 +658,227 @@
         });
       });
     });
+    trip.then(function () { traveling--; });
+    return trip;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Timeline
+
+  // The slider hides every dot whose oldest establishment opened after the
+  // chosen year, so the places light up as the country's business grew. The
+  // dots are today's active CNPJs: what it shows is what is still alive and
+  // already existed by then, not the city as it was.
+  //
+  // `target` is where the slider points, `shown` is what the shader gets: it
+  // eases toward the target, so a jump of decades is a short fade instead of a
+  // cut, and dots fade in over their opening year (see VS). While playing,
+  // `shown` simply follows the clock.
+  var tl = { target: TL_MAX, shown: TL_MAX, playing: false, last: 0, raf: 0, data: null };
+  var PLAY_SECONDS = 14;   // a full run, from the first lit year to TL_MAX
+
+  function tlFirstYear(d) {
+    // First year holding at least 0.5% of the points: the empty decades
+    // before it would be dead air in a playback.
+    var total = 0, acc = 0, y;
+    for (y = 0; y < 256; y++) total += d.hist[y];
+    for (y = 0; y < 256; y++) {
+      acc += d.hist[y];
+      if (acc >= total * 0.005) return clamp(y + TL_MIN, TL_MIN, TL_MAX - 1);
+    }
+    return TL_MIN;
+  }
+
+  function tlDrawBars() {
+    var d = tl.data, cv = $("tl-bars");
+    if (!d || !cv.clientWidth) return;
+    var dpr = window.devicePixelRatio || 1;
+    var w = cv.clientWidth, h = cv.clientHeight;
+    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
+      cv.width = Math.round(w * dpr);
+      cv.height = Math.round(h * dpr);
+    }
+    var ctx = cv.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    var years = TL_MAX - TL_MIN + 1;
+    var max = 0, i;
+    for (i = 0; i < years; i++) max = Math.max(max, d.hist[i]);
+    if (!max) return;
+    var cut = Math.round(tl.shown);
+    var step = w / years;
+    for (i = 0; i < years; i++) {
+      // Square root: the early decades stay visible next to the recent boom.
+      var bh = d.hist[i] ? Math.max(1.5, Math.sqrt(d.hist[i] / max) * h) : 0;
+      ctx.fillStyle = i + TL_MIN <= cut ? "rgba(217,169,159,0.85)" : "rgba(143,132,115,0.28)";
+      ctx.fillRect(i * step + 0.5, h - bh, Math.max(1, step - 1), bh);
+    }
+  }
+
+  function tlText() {
+    var d = tl.data;
+    var year = clamp(Math.round(tl.shown), TL_MIN, TL_MAX);
+    $("tl-year").textContent = year;
+    if (!d) return;
+    var upto = 0, y;
+    for (y = 0; y <= year - TL_MIN; y++) upto += d.hist[y];
+    var share = d.n ? upto / d.n : 1;
+    $("tl-count").innerHTML = current === "BR"
+      ? "<b>" + Math.round(share * 100) + "%</b> da amostra acesa"
+      : "<b>" + fmt(upto) + "</b> de " + fmt(d.n) + " endereços acesos";
+  }
+
+  function tlRender() {
+    var year = clamp(tl.shown, TL_MIN, TL_MAX);
+    var box = $("timeline");
+    box.style.setProperty("--p", ((year - TL_MIN) / (TL_MAX - TL_MIN)).toFixed(4));
+    var atEnd = tl.target >= TL_MAX && tl.shown >= TL_MAX - 0.005;
+    box.classList.toggle("is-now", atEnd);
+    $("tl-now").disabled = atEnd;
+    $("tl-slider").value = Math.round(tl.target);
+    $("tl-slider").setAttribute("aria-valuetext", "abertos até " + Math.round(tl.shown));
+    tlText();
+    tlDrawBars();
+    if (points) points.setYear(tl.shown - TL_MIN, TL_MAX - TL_MIN);
+  }
+
+  function tlStep(now) {
+    var dt = Math.min(0.05, (now - tl.last) / 1000);
+    tl.last = now;
+    if (tl.playing) {
+      var from = tl.data ? tlFirstYear(tl.data) : TL_MIN;
+      tl.target += dt * (TL_MAX - from) / PLAY_SECONDS;
+      if (tl.target >= TL_MAX) { tl.target = TL_MAX; tlPlaying(false); }
+      tl.shown = tl.target;
+    } else if (reduceMotion) {
+      tl.shown = tl.target;
+    } else {
+      tl.shown += (tl.target - tl.shown) * Math.min(1, dt * 12);
+      if (Math.abs(tl.target - tl.shown) < 0.005) tl.shown = tl.target;
+    }
+    tlRender();
+    tl.raf = tl.playing || tl.shown !== tl.target ? requestAnimationFrame(tlStep) : 0;
+    if (!tl.raf) writeHashSoon();
+  }
+
+  function tlKick() {
+    if (tl.raf) return;
+    tl.last = performance.now();
+    tl.raf = requestAnimationFrame(tlStep);
+  }
+
+  function tlPlaying(on) {
+    tl.playing = on;
+    var b = $("tl-play");
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-label", on ? "Pausar" : "Reproduzir do começo");
+    b.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+
+  function tlSet(year) {
+    tlPlaying(false);
+    tl.target = clamp(year, TL_MIN, TL_MAX);
+    tlKick();
+  }
+
+  // A new place brings its own histogram and its own first year.
+  function refreshTimeline() {
+    var d = current && cache.get(current);
+    tl.data = d && d.hasYears ? d : null;
+    $("timeline").hidden = !tl.data;
+    if (!tl.data) {
+      // No years in this file: nothing to filter by, show it all.
+      tl.target = tl.shown = TL_MAX;
+      if (points) points.setYear(TL_MAX - TL_MIN, TL_MAX - TL_MIN);
+      return;
+    }
+    tlRender();
+  }
+
+  function buildTimeline() {
+    var axis = $("tl-axis");
+    [1900, 1925, 1950, 1975, 2000, TL_MAX].forEach(function (y) {
+      var t = document.createElement("span");
+      t.textContent = y;
+      t.style.setProperty("--at", ((y - TL_MIN) / (TL_MAX - TL_MIN)).toFixed(4));
+      axis.appendChild(t);
+    });
+    $("tl-slider").min = TL_MIN;
+    $("tl-slider").max = TL_MAX;
+    $("tl-slider").value = TL_MAX;
+
+    $("tl-slider").addEventListener("input", function () { tlSet(+this.value); });
+    $("tl-now").addEventListener("click", function () { tlSet(TL_MAX); });
+    $("tl-play").addEventListener("click", function () {
+      if (tl.playing) { tlPlaying(false); return; }
+      if (!tl.data) return;
+      // Always from the dawn of the place: replay is the point.
+      tl.target = tl.shown = tlFirstYear(tl.data) - 1;
+      tlPlaying(true);
+      tlKick();
+    });
+    window.addEventListener("resize", tlDrawBars);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Which state is under the camera
+
+  // data/ufgrid.json (scripts/ufgrid.py) labels each 0.2 degree cell with the
+  // state that has most points in it. An empty cell borrows the nearest labelled
+  // one, within a few cells.
+  var ufGrid = null;
+
+  function loadUfGrid() {
+    fetch("data/ufgrid.json")
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (g) {
+        if (!g) return;
+        var cells = new Uint8Array(g.w * g.h), at = 0;
+        for (var i = 0; i < g.rle.length; i += 2) {
+          cells.fill(g.rle[i], at, at + g.rle[i + 1]);
+          at += g.rle[i + 1];
+        }
+        ufGrid = { g: g, cells: cells };
+      })
+      .catch(function () { /* no grid: the map just never opens a state by itself */ });
+  }
+
+  function ufAt(lng, lat) {
+    if (!ufGrid) return null;
+    var g = ufGrid.g;
+    var cx = Math.floor((lng - g.x0) / g.step), cy = Math.floor((lat - g.y0) / g.step);
+    for (var r = 0; r <= 6; r++) {
+      var best = 0, bestD = 1e9;
+      for (var dy = -r; dy <= r; dy++) {
+        for (var dx = -r; dx <= r; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+          var x = cx + dx, y = cy + dy;
+          if (x < 0 || y < 0 || x >= g.w || y >= g.h) continue;
+          var c = ufGrid.cells[y * g.w + x];
+          if (c && dx * dx + dy * dy < bestD) { best = c; bestD = dx * dx + dy * dy; }
+        }
+      }
+      if (best) return g.ufs[best - 1];
+    }
+    return null;
+  }
+
+  // After the camera rests: warm up the state ahead (zoom is nearly there), and
+  // once deep enough open it, keeping the camera exactly where it is.
+  function followCamera() {
+    if (!map || !requested || traveling) return;
+    var z = map.getZoom();
+    if (z < PREFETCH_ZOOM) return;
+    var c = map.getCenter();
+    var uf = ufAt(c.lng, c.lat);
+    if (!uf || !meta[uf] || uf === requested) return;
+    if (z < DETAIL_ZOOM) { if (requested === "BR") prefetchSoon(uf); return; }
+    select(uf, {
+      center: [c.lng, c.lat],
+      zoom: z,
+      pitch: map.getPitch(),
+      bearing: map.getBearing(),
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -656,6 +917,7 @@
     if (uf === "BR" && current && current !== "BR" && cache.has("BR")) {
       var left = current;
       current = "BR";
+      refreshTimeline();
       lightUp(left);
     }
     var landing = fly(uf, view);
@@ -671,6 +933,7 @@
         if (requested !== uf) return;
         var changed = current !== uf, from = current;
         current = uf;
+        refreshTimeline();
         apply(true);
         hideProgress();
         if (changed) lightUp(from);
@@ -686,7 +949,7 @@
   // angle: #sp/12.40/-23.55012/-46.63331/15/50 is
   // place/zoom/lat/lng/bearing/pitch, optionally followed by the three
   // sliders, /opacidade/brilho/tamanho, and then /cintilar, so the link
-  // carries the look too.
+  // carries the look too, and /ano once the timeline is wound back.
   // A bare #sp still frames the whole place.
   //
   // The zoom in the URL is for a reference screen whose short side is
@@ -702,7 +965,7 @@
     var uf = parts[0].toUpperCase();
     if (!meta[uf]) uf = "BR";
     var n = parts.slice(1).map(Number);
-    if (n.length < 3 || n.slice(0, 3).some(isNaN)) return { uf: uf, view: null, knobs: null, twinkle: null };
+    if (n.length < 3 || n.slice(0, 3).some(isNaN)) return { uf: uf, view: null, knobs: null, twinkle: null, year: null };
     var knobs = n.length >= 8 && !n.slice(5, 8).some(isNaN) ? {
       opacity: clamp(n[5], 0.05, 1),
       brightness: clamp(n[6], 0.02, 2.5),
@@ -712,6 +975,7 @@
       uf: uf,
       knobs: knobs,
       twinkle: knobs && n.length >= 9 && !isNaN(n[8]) ? clamp(n[8], 0, 1) : null,
+      year: knobs && n.length >= 10 && !isNaN(n[9]) ? clamp(Math.round(n[9]), TL_MIN, TL_MAX) : null,
       view: {
         zoom: clamp(n[0] + screenShift(), 2, MAX_ZOOM),
         center: [clamp(n[2], -180, 180), clamp(n[1], -85, 85)],
@@ -727,7 +991,9 @@
     var hash = "#" + requested.toLowerCase() + "/" + (map.getZoom() - screenShift()).toFixed(2) + "/" +
       c.lat.toFixed(5) + "/" + c.lng.toFixed(5) + "/" +
       Math.round(map.getBearing()) + "/" + Math.round(map.getPitch()) + "/" +
-      knobs.concat("twinkle").map(function (name) { return knobValue(name).toFixed(2); }).join("/");
+      knobs.concat("twinkle").map(function (name) { return knobValue(name).toFixed(2); }).join("/") +
+      // The year only rides along once the timeline is wound back.
+      (tl.target < TL_MAX ? "/" + Math.round(tl.target) : "");
     if (location.hash !== hash) history.replaceState(null, "", hash);
   }
 
@@ -752,6 +1018,7 @@
     if (h.view) setTilted(h.view.pitch > 0);
     sharedKnobs = h.view && h.knobs ? Object.assign({ zoom: h.view.zoom }, h.knobs) : null;
     if (h.twinkle !== null) setTwinkle(h.twinkle);
+    if (h.year !== null) { tl.target = tl.shown = h.year; tlRender(); }
     return h.view;
   }
 
@@ -842,6 +1109,8 @@
   }
 
   function wireUi() {
+    buildTimeline();
+
     $("picker-toggle").addEventListener("click", function () {
       var open = $("picker").classList.toggle("open");
       this.setAttribute("aria-expanded", open ? "true" : "false");
@@ -905,6 +1174,7 @@
 
         buildTiles();
         wireUi();
+        loadUfGrid();
 
         var b = m.BR.bbox;
         map = new maplibregl.Map({
@@ -925,6 +1195,7 @@
           map.addLayer(points);
           map.on("zoom", function () { schedule(true); });
           map.on("moveend", writeHashSoon);
+          map.on("moveend", followCamera);
           var h = fromHash();
           select(h.uf, showView(h));
         });

@@ -36,7 +36,7 @@
   <link href="https://unpkg.com/maplibre-gl@3.4.0/dist/maplibre-gl.css" rel="stylesheet">
   <script src="https://unpkg.com/maplibre-gl@3.4.0/dist/maplibre-gl.js"></script>
 
-  <link rel="stylesheet" href="app.css?v=8">
+  <link rel="stylesheet" href="app.css?v=9">
 </head>
 <body>
   <div id="map" aria-label="Mapa de pontos de estabelecimentos"></div>
@@ -102,6 +102,29 @@
     </div>
   </aside>
 
+  <section id="timeline" class="timeline" aria-label="Linha do tempo: ano de abertura" hidden>
+    <div class="tl-head">
+      <button type="button" id="tl-play" class="tl-play" aria-label="Reproduzir do começo" aria-pressed="false">
+        <svg class="i-play" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 1.5v9l7.5-4.5z"/></svg>
+        <svg class="i-pause" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 1.5h2.6v9H2.5zM6.9 1.5h2.6v9H6.9z"/></svg>
+      </button>
+      <div class="tl-read">
+        <span class="tl-lead">abertos até</span>
+        <output id="tl-year" class="tl-year" for="tl-slider">2025</output>
+      </div>
+      <div class="tl-sub">
+        <span id="tl-count" class="tl-count"></span>
+        <span class="tl-note">só quem segue ativo hoje</span>
+      </div>
+      <button type="button" id="tl-now" class="chip tl-now" title="Voltar para hoje">hoje</button>
+    </div>
+    <div class="tl-track">
+      <canvas id="tl-bars" class="tl-bars" aria-hidden="true"></canvas>
+      <input type="range" id="tl-slider" class="tl-slider" min="1900" max="2025" step="1" value="2025" aria-label="Ano de abertura do estabelecimento">
+    </div>
+    <div id="tl-axis" class="tl-axis" aria-hidden="true"></div>
+  </section>
+
   <dialog id="about" class="about">
     <form method="dialog"><button class="close" aria-label="Fechar">×</button></form>
     <h2>Como foi feito</h2>
@@ -114,6 +137,11 @@
     <p>A vista do Brasil é uma amostra de 2 milhões dos <span id="sum-points"></span> pontos dos estados,
       para caber no navegador. Abra um estado para ver todos os pontos dele.
       O Distrito Federal ainda não tem arquivo.</p>
+    <p>A linha do tempo usa a data de início de atividade do cadastro e esconde os pontos cujo
+      estabelecimento mais antigo abriu depois do ano escolhido. Como o mapa só tem quem segue
+      ativo hoje, quem já fechou não aparece: ela mostra o que existe hoje e já existia naquele ano,
+      não a cidade como era. Com ela recuada, o mapa desenha os pontos um a um, sem o agrupamento
+      de longe.</p>
     <p>A soma de luz é aditiva: onde muitos pontos se empilham, a cor satura até o branco.
       Brilho controla quantos pontos são precisos para isso.</p>
     <p class="fine">Dados: Receita Federal (CNPJ), IBGE (CNEFE, Censo 2022), via Base dos Dados.
@@ -124,6 +152,6 @@
 
   <div id="error" class="error" role="alert" hidden></div>
 
-  <script src="app.js?v=18"></script>
+  <script src="app.js?v=20"></script>
 </body>
 </html>

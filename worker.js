@@ -7,9 +7,11 @@
 // never leaves a stale download competing for bandwidth.
 //
 // File layout: see scripts/repack.py. After gunzip, a 32-byte header (magic
-// "BLP2", u32 n, f64 lng0, f64 lat0, f64 q) then two blocks of n LEB128
-// varints: zigzag deltas of the x and y grid indexes, in Morton order. The
-// .gz is served as a plain file (no Content-Encoding), so we gunzip it here.
+// "BLP3", u32 n, f64 lng0, f64 lat0, f64 q) then two blocks of n LEB128
+// varints: zigzag deltas of the x and y grid indexes, in Morton order, then
+// n bytes with the year each point's oldest establishment opened, minus 1900
+// (files in the older "BLP2" layout stop after the varints and have no year).
+// The .gz is served as a plain file (no Content-Encoding), so we gunzip it here.
 
 var current = null;
 
@@ -47,8 +49,11 @@ self.onmessage = function (e) {
       if (current === controller) current = null;
       // Points first, so the map lights up now; the merged levels follow.
       self.postMessage(
-        { id: id, ok: true, n: out.n, positions: out.positions, origin: out.origin, q: out.q },
-        [out.positions.buffer]
+        {
+          id: id, ok: true, n: out.n, positions: out.positions, origin: out.origin, q: out.q,
+          years: out.years, hist: out.hist, hasYears: out.hasYears,
+        },
+        [out.positions.buffer, out.years.buffer]
       );
       var levels = buildLevels(out);
       self.postMessage(
@@ -96,7 +101,7 @@ function lookup(t, gi) {
 function decode(buf) {
   var head = new DataView(buf, 0, 32);
   var magic = String.fromCharCode(head.getUint8(0), head.getUint8(1), head.getUint8(2), head.getUint8(3));
-  if (magic !== "BLP2") throw new Error("formato de dados desconhecido");
+  if (magic !== "BLP2" && magic !== "BLP3") throw new Error("formato de dados desconhecido");
   var n = head.getUint32(4, true);
   var lng0 = head.getFloat64(8, true);
   var lat0 = head.getFloat64(16, true);
@@ -132,8 +137,17 @@ function decode(buf) {
       for (i = 0; i < n; i++) positions[i * 2 + 1] = lookup(table, g[i]);
     }
   }
+  // BLP2 has no years: everything counts as opened in 1900, so it is always lit.
+  var hasYears = magic === "BLP3";
+  var years = new Uint8Array(n);
+  var hist = new Uint32Array(256);
+  if (hasYears) {
+    years.set(bytes.subarray(p, p + n));
+    for (i = 0; i < n; i++) hist[years[i]]++;
+  }
   return {
     n: n, positions: positions, origin: [ox, oy], q: q,
+    years: years, hist: hist, hasYears: hasYears,
     yTable: table, gx: grid[0], gy: grid[1],
   };
 }

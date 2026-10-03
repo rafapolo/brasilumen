@@ -2,19 +2,21 @@
 """Repack data/<uf>.bin.gz from the extractor's raw layout into the compact one
 the site reads.
 
-Raw layout (extrai_estados_cnpj.py, write_points_soa): gzip of n lngs (f32),
-n lats (f32), n weights (u16).
+Raw layout (extrai_estados_cnpj.py, write_points_soa): gzip of b"RAW2", u32 n,
+then n lngs (f32), n lats (f32), n weights (u16), n years-since-1900 (u8).
 
 Packed layout (what worker.js decodes), gzipped:
 
     header, 32 bytes little-endian
-      4s  magic "BLP2"
+      4s  magic "BLP3"
       u32 n
       f64 lng0, f64 lat0   origin of the grid
       f64 q                grid step in degrees
     2 blocks of n LEB128 varints each
       dx  zigzag deltas of the x grid index
       dy  zigzag deltas of the y grid index
+    n bytes: the year the point's oldest establishment opened, minus 1900
+             (the "linha do tempo" slider hides points newer than its year)
 
 The u16 weights are dropped: the map never reads them (dot size and light are
 slider-controlled), and they would add ~10% to every download. The raw files
@@ -38,7 +40,8 @@ from pathlib import Path
 
 import numpy as np
 
-MAGIC = b"BLP2"
+MAGIC = b"BLP3"
+OLD_MAGICS = (b"BLP2",)
 Q = 1e-5
 
 
@@ -83,20 +86,27 @@ def repack(path):
     raw = gzip.decompress(path.read_bytes())
     if raw[:4] == MAGIC:
         return None
-    n = len(raw) // 10
-    lng = np.frombuffer(raw, "<f4", n, 0).astype(np.float64)
-    lat = np.frombuffer(raw, "<f4", n, 4 * n).astype(np.float64)
+    if raw[:4] in OLD_MAGICS:
+        raise SystemExit(f"{path}: layout BLP2 não tem ano; extraia de novo com extrai_estados_cnpj.py")
+    if raw[:4] != b"RAW2":
+        raise SystemExit(f"{path}: layout bruto sem ano; extraia de novo com extrai_estados_cnpj.py")
+    n = int(np.frombuffer(raw, "<u4", 1, 4)[0])
+    o = 8
+    lng = np.frombuffer(raw, "<f4", n, o).astype(np.float64)
+    lat = np.frombuffer(raw, "<f4", n, o + 4 * n).astype(np.float64)
+    year = np.frombuffer(raw, "u1", n, o + 10 * n)
 
     lng0, lat0 = float(lng.min()), float(lat.min())
     x = np.round((lng - lng0) / Q).astype(np.int64)
     y = np.round((lat - lat0) / Q).astype(np.int64)
     order = np.argsort(spread_bits(x) | (spread_bits(y) << np.uint64(1)), kind="stable")
-    x, y = x[order], y[order]
+    x, y, year = x[order], y[order], year[order]
 
     body = (
         struct.pack("<4sIddd", MAGIC, n, lng0, lat0, Q)
         + varints(zigzag(np.diff(x, prepend=0)))
         + varints(zigzag(np.diff(y, prepend=0)))
+        + year.tobytes()
     )
     packed = gzip.compress(body, 9)
     before = path.stat().st_size
