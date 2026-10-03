@@ -3,7 +3,7 @@
 Marcadas com * as que pedem dados que os arquivos de pontos ainda não trazem (a Receita e o CNEFE têm).
 
 - [ ] **Filtro por atividade (CNAE)\*:** acender só restaurantes, farmácias, oficinas… cada setor com sua cor de luz.
-- [ ] **Linha do tempo\*:** um slider de ano de abertura do CNPJ, para ver as cidades acendendo de 1970 até hoje.
+- [x] **Linha do tempo:** um slider de ano de abertura do CNPJ, para ver as cidades acendendo de 1900 até hoje.
 - [ ] **Comparar dois lugares lado a lado:** dois mapas sincronizados, por exemplo SP × RJ no mesmo zoom e ângulo.
 - [ ] **Busca por endereço ou cidade:** digitar "Pinheiros" ou um CEP e a câmera voa até lá.
 - [ ] **Contagem ao vivo da área visível:** "12.430 estabelecimentos nesta tela", atualizando enquanto você arrasta.
