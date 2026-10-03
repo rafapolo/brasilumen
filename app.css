@@ -6,6 +6,9 @@
   --ember-raw: 139, 87, 79; /* the dot color itself, kepler reference */
   --glass: rgba(8, 6, 5, 0.62);
   --hair: rgba(237, 227, 209, 0.14);
+  --hair-hi: var(--hair-hi); /* hover and open borders */
+  /* The glow of one lit lamp: the wordmark's "l" and the loading dot. */
+  --halo: 0 0 6px rgba(255, 214, 170, 0.8), 0 0 22px rgba(var(--ember-raw), 0.9), 0 0 48px rgba(var(--ember-raw), 0.7);
   --display: "Bricolage Grotesque", system-ui, sans-serif;
   --mono: "Martian Mono", ui-monospace, monospace;
   --gutter: 20px;
@@ -34,7 +37,7 @@ html, body {
   text-size-adjust: 100%;
 }
 
-#map { position: absolute; top: 0; right: 0; bottom: 0; left: 0; }
+#map { position: absolute; inset: 0; }
 
 /* Basemap is a plain black background; this only softens MapLibre's canvas
    in case a style layer ever sneaks in. */
@@ -53,6 +56,16 @@ button {
   outline-offset: 2px;
 }
 
+/* Every floating panel over the map: masthead, light controls, state picker,
+   timeline and the loading notice share the same smoked glass. */
+.panel {
+  background: var(--glass);
+  border: 1px solid var(--hair);
+  border-radius: 4px;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
 /* ---------- masthead ---------- */
 
 .masthead {
@@ -62,11 +75,6 @@ button {
   z-index: 10;
   max-width: min(440px, calc(100vw - 2 * var(--gutter)));
   padding: 14px 16px;
-  background: var(--glass);
-  border: 1px solid var(--hair);
-  border-radius: 4px;
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
   pointer-events: none;
 }
 
@@ -83,10 +91,7 @@ button {
 .wordmark .lit {
   font-weight: 800;
   color: var(--lamp);
-  text-shadow:
-    0 0 6px rgba(255, 214, 170, 0.75),
-    0 0 22px rgba(var(--ember-raw), 0.9),
-    0 0 48px rgba(var(--ember-raw), 0.7);
+  text-shadow: var(--halo);
 }
 
 .dek {
@@ -139,11 +144,6 @@ button {
   letter-spacing: 0.04em;
   color: var(--lamp);
   padding: 18px 22px 16px;
-  background: var(--glass);
-  border: 1px solid var(--hair);
-  border-radius: 4px;
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
   animation: progress-in 250ms ease-out;
   transition: opacity 700ms ease;
 }
@@ -160,10 +160,7 @@ button {
   height: 8px;
   border-radius: 50%;
   background: var(--lamp);
-  box-shadow:
-    0 0 6px rgba(255, 214, 170, 0.9),
-    0 0 22px rgba(var(--ember-raw), 0.9),
-    0 0 48px rgba(var(--ember-raw), 0.7);
+  box-shadow: var(--halo);
   animation: breathe 1.6s ease-in-out infinite;
 }
 
@@ -207,11 +204,6 @@ button {
   bottom: var(--bottom);
   z-index: 10;
   padding: 12px;
-  background: var(--glass);
-  border: 1px solid var(--hair);
-  border-radius: 4px;
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
 }
 
 .picker-head {
@@ -258,7 +250,7 @@ button {
 
 @media (hover: hover) {
   .tile:hover {
-    border-color: rgba(237, 227, 209, 0.5);
+    border-color: var(--hair-hi);
     color: var(--lamp);
   }
 }
@@ -362,20 +354,15 @@ button {
   -webkit-backdrop-filter: blur(6px);
 }
 
-.chip[aria-expanded="true"] { border-color: rgba(237, 227, 209, 0.5); }
+.chip[aria-expanded="true"] { border-color: var(--hair-hi); }
 
 @media (hover: hover) {
-  .chip:hover { border-color: rgba(237, 227, 209, 0.5); }
+  .chip:hover { border-color: var(--hair-hi); }
 }
 
 .light-panel {
   width: 100%;
   padding: 12px 14px 10px;
-  background: var(--glass);
-  border: 1px solid var(--hair);
-  border-radius: 4px;
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
 }
 
 .knob {
@@ -391,7 +378,7 @@ button {
   color: var(--dim);
 }
 
-.knob output { color: var(--lamp); font-variant-numeric: tabular-nums; }
+.knob output, .light-foot output { color: var(--lamp); font-variant-numeric: tabular-nums; }
 
 .knob input[type="range"] {
   width: 100%;
@@ -406,8 +393,6 @@ button {
   color: var(--dim);
 }
 
-.light-foot output { color: var(--lamp); font-variant-numeric: tabular-nums; }
-
 /* ---------- timeline ---------- */
 
 /* Sits on the floor of the map between the state picker and the credit.
@@ -415,6 +400,12 @@ button {
 .timeline {
   --p: 1;
   --thumb: 14px;
+  --track: 56px;
+  /* The playhead: a lit wire with a lamp at its foot. */
+  --playhead:
+    radial-gradient(circle at 50% calc(100% - 4px), var(--lamp) 0 3.5px, transparent 4.5px),
+    linear-gradient(var(--lamp), var(--lamp)) center / 2px 100% no-repeat;
+  --playhead-glow: drop-shadow(0 0 5px rgba(255, 214, 170, 0.9)) drop-shadow(0 0 14px rgba(var(--ember-raw), 0.9));
   position: absolute;
   bottom: var(--bottom);
   left: 300px;
@@ -423,11 +414,6 @@ button {
   margin: 0 auto;
   z-index: 10;
   padding: 12px 14px 8px;
-  background: var(--glass);
-  border: 1px solid var(--hair);
-  border-radius: 4px;
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
 }
 
 .tl-head {
@@ -453,7 +439,7 @@ button {
 
 @media (hover: hover) {
   .tl-play:hover {
-    border-color: rgba(237, 227, 209, 0.5);
+    border-color: var(--hair-hi);
     background: rgba(var(--ember-raw), 0.4);
   }
 }
@@ -513,7 +499,7 @@ button {
    drag anywhere on the bars scrubs; the thumb is a full-height playhead. */
 .tl-track {
   position: relative;
-  height: 56px;
+  height: var(--track);
 }
 
 .tl-bars {
@@ -541,37 +527,28 @@ button {
 .tl-slider:focus { outline: none; }
 .tl-slider:focus-visible { outline: 1px solid var(--lamp); outline-offset: 2px; }
 
-.tl-slider::-webkit-slider-runnable-track {
-  height: 56px;
-  background: transparent;
-}
-
-.tl-slider::-moz-range-track {
-  height: 56px;
-  background: transparent;
-}
+/* WebKit and Gecko pseudo-elements cannot share a selector list (a browser
+   drops the whole rule over the one it does not know), so they stay twins. */
+.tl-slider::-webkit-slider-runnable-track { height: var(--track); background: transparent; }
+.tl-slider::-moz-range-track { height: var(--track); background: transparent; }
 
 .tl-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   width: var(--thumb);
-  height: 56px;
+  height: var(--track);
   border: 0;
   border-radius: 0;
-  background:
-    radial-gradient(circle at 50% calc(100% - 4px), var(--lamp) 0 3.5px, transparent 4.5px),
-    linear-gradient(var(--lamp), var(--lamp)) center / 2px 100% no-repeat;
-  filter: drop-shadow(0 0 5px rgba(255, 214, 170, 0.9)) drop-shadow(0 0 14px rgba(var(--ember-raw), 0.9));
+  background: var(--playhead);
+  filter: var(--playhead-glow);
 }
 
 .tl-slider::-moz-range-thumb {
   width: var(--thumb);
-  height: 56px;
+  height: var(--track);
   border: 0;
   border-radius: 0;
-  background:
-    radial-gradient(circle at 50% calc(100% - 4px), var(--lamp) 0 3.5px, transparent 4.5px),
-    linear-gradient(var(--lamp), var(--lamp)) center / 2px 100% no-repeat;
-  filter: drop-shadow(0 0 5px rgba(255, 214, 170, 0.9)) drop-shadow(0 0 14px rgba(var(--ember-raw), 0.9));
+  background: var(--playhead);
+  filter: var(--playhead-glow);
 }
 
 .tl-axis {
@@ -683,7 +660,7 @@ button {
    rate and battery. A darker glass reads the same without it. */
 @media (max-width: 640px), (pointer: coarse) {
   :root { --glass: rgba(8, 6, 5, 0.86); }
-  .progress, .masthead, .light-panel, .picker, .chip, .timeline {
+  .panel, .chip {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
@@ -704,13 +681,11 @@ button {
     right: var(--right);
     bottom: calc(var(--bottom) + 44px);
     padding: 10px 12px 6px;
+    --track: 44px;
   }
 
   .tl-head { gap: 10px; margin-bottom: 6px; }
   .tl-year { font-size: 24px; }
-  .tl-track, .tl-slider::-webkit-slider-runnable-track, .tl-slider::-webkit-slider-thumb { height: 44px; }
-  .tl-slider::-moz-range-track, .tl-slider::-moz-range-thumb { height: 44px; }
-  .tl-track { height: 44px; }
   .tl-note { display: none; }
 
   .light { top: auto; bottom: calc(var(--bottom) + 44px + 112px); width: auto; max-width: calc(100vw - 2 * var(--gutter)); }
@@ -725,17 +700,9 @@ button {
     left: var(--left);
     bottom: var(--bottom);
     z-index: 13;
-  }
-
-  .picker-toggle {
     height: 32px;
     padding: 0 14px;
-    border: 1px solid var(--hair);
     border-radius: 16px;
-    background: var(--glass);
-    font-family: var(--mono);
-    font-size: 10px;
-    cursor: pointer;
   }
 
   #picker-toggle-uf { font-weight: 400; color: var(--ember); margin-right: 4px; }

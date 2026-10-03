@@ -39,18 +39,18 @@
   <script src="https://unpkg.com/maplibre-gl@3.4.0/dist/maplibre-gl.js" defer></script>
   <link rel="preload" href="data/meta.json" as="fetch" crossorigin="anonymous">
 
-  <link rel="stylesheet" href="app.css?v=11">
+  <link rel="stylesheet" href="app.css?v=12">
 </head>
 <body>
   <div id="map" aria-label="Mapa de pontos de estabelecimentos"></div>
 
-  <div id="progress" class="progress" role="status" hidden>
+  <div id="progress" class="progress panel" role="status" hidden>
     <span class="glow" aria-hidden="true"></span>
     <span id="progress-text"></span>
     <div class="bar"><i id="progress-fill"></i></div>
   </div>
 
-  <header class="masthead">
+  <header class="masthead panel">
     <h1 class="wordmark">brasi<span class="lit">l</span>umen</h1>
     <p class="dek">Cada ponto é um estabelecimento com CNPJ ativo, posto no seu endereço do Censo&nbsp;2022.</p>
     <div class="readout" aria-live="polite">
@@ -59,7 +59,7 @@
     </div>
   </header>
 
-  <nav id="picker" class="picker" aria-label="Escolher estado">
+  <nav id="picker" class="picker panel" aria-label="Escolher estado">
     <div class="picker-head">
       <span class="label">estados</span>
       <button type="button" class="tile tile-br" data-uf="BR" aria-pressed="false">Brasil</button>
@@ -74,12 +74,12 @@
     </div>
   </nav>
 
-  <button type="button" id="picker-toggle" class="picker-toggle" aria-controls="picker" aria-expanded="false">
+  <button type="button" id="picker-toggle" class="chip picker-toggle" aria-controls="picker" aria-expanded="false">
     <span id="picker-toggle-uf">BR</span> estados
   </button>
 
   <aside class="light" aria-label="Ajustes de luz">
-    <div id="light-panel" class="light-panel">
+    <div id="light-panel" class="light-panel panel">
       <label class="knob">
         <span>opacidade <output id="opacity-out"></output></span>
         <input type="range" id="opacity" min="0.05" max="1" step="0.01" value="0.8">
@@ -105,7 +105,7 @@
     </div>
   </aside>
 
-  <section id="timeline" class="timeline" aria-label="Linha do tempo: ano de abertura" hidden>
+  <section id="timeline" class="timeline panel" aria-label="Linha do tempo: ano de abertura" hidden>
     <div class="tl-head">
       <button type="button" id="tl-play" class="tl-play" aria-label="Reproduzir do começo" aria-pressed="false">
         <svg class="i-play" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 1.5v9l7.5-4.5z"/></svg>
