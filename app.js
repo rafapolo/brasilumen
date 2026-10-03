@@ -663,19 +663,16 @@
   function padding() {
     var small = window.innerWidth <= 640;
     if (small) return { top: 150, bottom: 150, left: 16, right: 16 };
-    // Keep the place clear of the picker and the sliders: beside them on
-    // landscape screens, between them on portrait ones.
-    var picker = $("picker").getBoundingClientRect();
-    var light = document.querySelector(".light").getBoundingClientRect();
-    if (window.innerWidth > window.innerHeight) {
-      return {
-        top: 60,
-        bottom: 120,
-        left: Math.min(picker.width + 50, window.innerWidth * 0.3),
-        right: Math.min(light.width + 50, window.innerWidth * 0.25),
-      };
-    }
-    return { top: 280, bottom: Math.max(picker.height, 100) + 50, left: 40, right: 40 };
+    // Keep the place clear of the panel column on the left and the sliders
+    // on the right (0 wide while folded away on short screens).
+    var rail = document.querySelector(".rail").getBoundingClientRect();
+    var light = $("light-panel").getBoundingClientRect();
+    return {
+      top: 60,
+      bottom: 120,
+      left: Math.min(rail.width + 50, window.innerWidth * 0.35),
+      right: Math.min(light.width + 50, window.innerWidth * 0.25),
+    };
   }
 
   function cameraFor(uf) {
@@ -882,7 +879,8 @@
   function refreshTimeline() {
     var d = current && cache.get(current);
     tl.data = d && d.hasYears ? d : null;
-    $("timeline").hidden = !tl.data;
+    $("timeline").hidden = $("tl-toggle").hidden = !tl.data;
+    if (!tl.data && sheet === "timeline") setSheet(null);
     if (!tl.data) {
       // No years in this file: nothing to filter by, show it all.
       tl.target = tl.shown = TL_MAX;
@@ -996,7 +994,6 @@
     document.querySelectorAll(".tile[data-uf]").forEach(function (el) {
       el.setAttribute("aria-pressed", el.dataset.uf === uf ? "true" : "false");
     });
-    $("picker-toggle-uf").textContent = uf;
   }
 
   function select(uf, view) {
@@ -1204,22 +1201,32 @@
     }, 250);
   }
 
+  // Phones show the picker, the sliders and the timeline as sheets over the
+  // dock, one at a time; on wider screens only luz folds (short ones).
+  var SHEETS = { picker: "picker", light: "light-panel", timeline: "timeline" };
+  var sheet = null;
+
+  function setSheet(name) {
+    sheet = name;
+    Object.keys(SHEETS).forEach(function (k) {
+      $(SHEETS[k]).classList.toggle("open", k === name);
+    });
+    document.querySelectorAll("[data-sheet]").forEach(function (b) {
+      b.setAttribute("aria-expanded", b.dataset.sheet === name ? "true" : "false");
+    });
+  }
+
   function closePicker() {
-    $("picker").classList.remove("open");
-    $("picker-toggle").setAttribute("aria-expanded", "false");
+    if (sheet === "picker") setSheet(null);
   }
 
   function wireUi() {
     buildTimeline();
 
-    $("picker-toggle").addEventListener("click", function () {
-      var open = $("picker").classList.toggle("open");
-      this.setAttribute("aria-expanded", open ? "true" : "false");
-    });
-
-    $("light-toggle").addEventListener("click", function () {
-      var open = $("light-panel").classList.toggle("open");
-      this.setAttribute("aria-expanded", open ? "true" : "false");
+    document.querySelectorAll("[data-sheet]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        setSheet(sheet === b.dataset.sheet ? null : b.dataset.sheet);
+      });
     });
 
     knobs.forEach(function (name) {
@@ -1257,9 +1264,7 @@
 
     document.addEventListener("keydown", function (e) {
       if (e.key === "Escape") {
-        closePicker();
-        $("light-panel").classList.remove("open");
-        $("light-toggle").setAttribute("aria-expanded", "false");
+        setSheet(null);
       }
     });
 

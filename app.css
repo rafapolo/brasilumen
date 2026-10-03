@@ -4,7 +4,7 @@
   --dim: #8f8473;
   --ember: #d9a99f;       /* the dot color lifted to read as text */
   --ember-raw: 139, 87, 79; /* the dot color itself, kepler reference */
-  --glass: rgba(8, 6, 5, 0.62);
+  --glass: rgba(8, 6, 5, 0.8);
   --hair: rgba(237, 227, 209, 0.14);
   --hair-hi: var(--hair-hi); /* hover and open borders */
   /* The glow of one lit lamp: the wordmark's "l" and the loading dot. */
@@ -12,6 +12,7 @@
   --display: "Bricolage Grotesque", system-ui, sans-serif;
   --mono: "Martian Mono", ui-monospace, monospace;
   --gutter: 20px;
+  --rail: 256px;          /* the left-hand column every panel stacks in */
   /* The page runs under the notch and the home bar (viewport-fit=cover):
      every edge keeps its gutter clear of them. */
   --top: calc(var(--gutter) + env(safe-area-inset-top, 0px));
@@ -66,14 +67,27 @@ button {
   -webkit-backdrop-filter: blur(6px);
 }
 
-/* ---------- masthead ---------- */
+/* ---------- rail ---------- */
 
-.masthead {
+/* Intro, states and the hover still, top to bottom. */
+.rail {
   position: absolute;
   top: var(--top);
   left: var(--left);
+  bottom: var(--bottom);
   z-index: 10;
-  max-width: min(440px, calc(100vw - 2 * var(--gutter)));
+  width: var(--rail);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.rail > * { flex: none; pointer-events: auto; }
+
+/* ---------- masthead ---------- */
+
+.masthead {
   padding: 14px 16px;
   pointer-events: none;
 }
@@ -198,13 +212,7 @@ button {
 
 /* ---------- state picker ---------- */
 
-.picker {
-  position: absolute;
-  left: var(--left);
-  bottom: var(--bottom);
-  z-index: 10;
-  padding: 12px;
-}
+.picker { position: relative; padding: 12px; }
 
 .picker-head {
   display: flex;
@@ -228,6 +236,8 @@ button {
   grid-template-columns: repeat(7, 30px);
   grid-template-rows: repeat(8, 30px);
   gap: 3px;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .tile {
@@ -277,11 +287,12 @@ button {
   --glow: 1;
 }
 
+/* Pops up right under the picker. */
 .peek {
   position: absolute;
   left: 0;
-  bottom: calc(100% + 8px);
-  width: 100%;
+  right: 0;
+  top: calc(100% + 8px);
   background: var(--night);
   border: 1px solid var(--hair);
   border-radius: 4px;
@@ -314,30 +325,31 @@ button {
   color: var(--dim);
 }
 
-.picker-toggle { display: none; }
+/* The dock only exists on phones. */
+.dock { display: none; }
 
 /* ---------- light controls ---------- */
 
+/* The sliders keep the top right corner, the chips centered under them. */
 .light {
   position: absolute;
   top: var(--top);
   right: var(--right);
   z-index: 10;
+  width: var(--rail);
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
+  align-items: center;
   gap: 8px;
-  width: 230px;
 }
 
 .chips {
   display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
   gap: 6px;
 }
 
-/* luz only matters on phones, where the sliders fold away. */
+/* luz only shows on short screens, where the sliders fold away. */
 #light-toggle { display: none; }
 
 .chip {
@@ -395,7 +407,8 @@ button {
 
 /* ---------- timeline ---------- */
 
-/* Sits on the floor of the map between the state picker and the credit.
+/* Sits on the floor of the map, centered on the screen and as wide as it
+   can be without reaching under the rail on either side.
    --p is the playhead's place along the track, 0..1, set from app.js. */
 .timeline {
   --p: 1;
@@ -408,9 +421,10 @@ button {
   --playhead-glow: drop-shadow(0 0 5px rgba(255, 214, 170, 0.9)) drop-shadow(0 0 14px rgba(var(--ember-raw), 0.9));
   position: absolute;
   bottom: var(--bottom);
-  left: 300px;
-  right: 130px;
-  width: min(780px, calc(100vw - 430px));
+  left: 0;
+  right: 0;
+  width: min(780px, calc(100vw - 2 * (var(--rail) + var(--gutter) + 8px)));
+  min-width: 430px;
   margin: 0 auto;
   z-index: 10;
   padding: 12px 14px 8px;
@@ -666,65 +680,95 @@ button {
   }
 }
 
+/* Short screens: the column would run off the bottom, so the intro loses its
+   line and the sliders fold behind luz, as on phones. */
+@media (min-width: 641px) and (max-height: 860px) {
+  .dek { display: none; }
+  .readout { margin-top: 10px; }
+  #light-toggle { display: block; }
+  /* With luz the three chips outgrow the panel's width: one row, flush right. */
+  .light { width: auto; align-items: flex-end; }
+  .chips { flex-wrap: nowrap; }
+  .light-panel { display: none; width: var(--rail); }
+  .light-panel.open { display: block; }
+}
+
 /* ---------- phones ---------- */
 
 @media (max-width: 640px) {
-  :root { --gutter: 16px; }
+  :root { --gutter: 16px; --dock: 48px; }
+
+  /* The column dissolves: the masthead keeps the top, the chips and the
+     credit the bottom right, and the panels become sheets over the dock. */
+  .rail, .light { display: contents; }
+
+  .masthead {
+    position: absolute;
+    top: var(--top);
+    left: var(--left);
+    z-index: 10;
+    max-width: calc(100vw - 2 * var(--gutter));
+  }
 
   .dek { display: none; }
   .readout { margin-top: 10px; }
 
-  .timeline {
-    width: auto;
-    margin: 0;
-    left: var(--left);
+  /* Stacked over the credit, clear of the dock's row. */
+  .chips {
+    position: absolute;
     right: var(--right);
-    bottom: calc(var(--bottom) + 44px);
-    padding: 10px 12px 6px;
-    --track: 44px;
+    bottom: calc(var(--bottom) + 42px);
+    z-index: 10;
+    flex-direction: column;
+    align-items: flex-end;
   }
 
-  .tl-head { gap: 10px; margin-bottom: 6px; }
-  .tl-year { font-size: 24px; }
-  .tl-note { display: none; }
-
-  .light { top: auto; bottom: calc(var(--bottom) + 44px + 112px); width: auto; max-width: calc(100vw - 2 * var(--gutter)); }
-  .chips { flex-direction: column; align-items: flex-end; }
-  #light-toggle { display: block; }
-  .light-panel { display: none; width: min(240px, calc(100vw - 2 * var(--gutter))); }
-  .light-panel.open { display: block; }
-
-  .picker-toggle {
-    display: block;
+  .dock {
+    display: flex;
+    gap: 6px;
     position: absolute;
     left: var(--left);
     bottom: var(--bottom);
     z-index: 13;
-    height: 32px;
-    padding: 0 14px;
-    border-radius: 16px;
   }
 
-  #picker-toggle-uf { font-weight: 400; color: var(--ember); margin-right: 4px; }
+  .dock .chip { height: 32px; padding: 0 14px; border-radius: 16px; }
+  .dock .chip[aria-expanded="true"] { background: var(--lamp); color: var(--night); }
 
-  .picker {
+  /* Sheets: opaque, sliding up from under the dock, one open at a time.
+     visibility keeps their layout (the timeline canvas measures itself). */
+  .picker, .light-panel, .timeline {
+    position: absolute;
     left: 0;
     right: 0;
     bottom: 0;
-    border-radius: 8px 8px 0 0;
-    padding: 16px var(--gutter) calc(64px + env(safe-area-inset-bottom));
     z-index: 12;
+    width: auto;
+    margin: 0;
+    background: #0b0908;
+    border-width: 1px 0 0;
+    border-radius: 8px 8px 0 0;
+    padding: 16px var(--gutter) calc(var(--bottom) + var(--dock));
     transform: translateY(100%);
-    transition: transform 220ms ease;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
+    visibility: hidden;
+    transition: transform 220ms ease, visibility 0s 220ms;
   }
 
-  .picker.open { transform: none; }
+  .picker.open, .light-panel.open, .timeline.open {
+    transform: none;
+    visibility: visible;
+    transition: transform 220ms ease;
+  }
+
+  .picker { display: flex; flex-direction: column; align-items: center; }
   .picker-head { width: 100%; max-width: 280px; }
   .tiles { grid-template-columns: repeat(7, 36px); grid-template-rows: repeat(8, 36px); }
   .peek { display: none !important; }
+
+  .timeline { --track: 44px; min-width: 0; }
+  .tl-head { gap: 10px; margin-bottom: 6px; }
+  .tl-year { font-size: 24px; }
+  .tl-note { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
