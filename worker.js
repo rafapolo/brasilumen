@@ -28,6 +28,11 @@ self.onmessage = function (e) {
       var total = parseInt(res.headers.get("Content-Length"), 10) || 0;
       var loaded = 0;
       var lastPost = 0;
+      // Older browsers (iOS < 16.4, Firefox < 113) have no DecompressionStream,
+      // some no TransformStream: read the body whole and gunzip it in JS.
+      if (typeof DecompressionStream === "undefined" || typeof TransformStream === "undefined" || !res.body) {
+        return res.arrayBuffer().then(gunzip);
+      }
       // Count compressed bytes as they arrive, before decompression, so the
       // progress fraction lines up with Content-Length.
       var counter = new TransformStream({
@@ -47,19 +52,19 @@ self.onmessage = function (e) {
     .then(function (buf) {
       var out = decode(buf);
       if (current === controller) current = null;
+      var boxes = chunkBoxes(out.positions, out.n, 2);
       // Points first, so the map lights up now; the merged levels follow.
       self.postMessage(
         {
           id: id, ok: true, n: out.n, positions: out.positions, origin: out.origin, q: out.q,
-          years: out.years, hist: out.hist, hasYears: out.hasYears,
+          years: out.years, hist: out.hist, hasYears: out.hasYears, boxes: boxes, chunk: CHUNK,
         },
-        [out.positions.buffer, out.years.buffer]
+        [out.positions.buffer, out.years.buffer, boxes.buffer]
       );
       var levels = buildLevels(out);
-      self.postMessage(
-        { id: id, levels: levels },
-        levels.map(function (l) { return l.data.buffer; })
-      );
+      var transfer = [];
+      levels.forEach(function (l) { transfer.push(l.data.buffer, l.boxes.buffer); });
+      self.postMessage({ id: id, levels: levels }, transfer);
     })
     .catch(function (err) {
       if (err.name === "AbortError") return;
@@ -67,6 +72,14 @@ self.onmessage = function (e) {
       self.postMessage({ id: id, ok: false, error: err.message });
     });
 };
+
+function gunzip(buf) {
+  if (typeof fflate === "undefined") importScripts("https://unpkg.com/fflate@0.8.2/umd/index.js");
+  var out = fflate.gunzipSync(new Uint8Array(buf));
+  return out.byteOffset === 0 && out.byteLength === out.buffer.byteLength
+    ? out.buffer
+    : out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength);
+}
 
 // Web Mercator in MapLibre's [0,1] world units, as the map's custom-layer
 // matrix expects.
@@ -152,6 +165,32 @@ function decode(buf) {
   };
 }
 
+// Culling. Zoomed in, most of a state is off screen, yet every point would
+// still run the vertex shader each frame (3.3M on SP, every frame while the
+// lights twinkle). Points are in Morton order, so CHUNK consecutive points
+// cover a compact patch of ground: the bounding box of each chunk, as
+// [minx, miny, maxx, maxy] in the same Mercator offsets as the points, lets
+// the layer draw only the runs of chunks that reach the screen.
+var CHUNK = 8192;
+
+function chunkBoxes(data, n, stride) {
+  var count = Math.ceil(n / CHUNK);
+  var boxes = new Float32Array(count * 4);
+  for (var c = 0; c < count; c++) {
+    var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    var end = Math.min(n, (c + 1) * CHUNK) * stride;
+    for (var o = c * CHUNK * stride; o < end; o += stride) {
+      var x = data[o], y = data[o + 1];
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+    }
+    boxes[c * 4] = x0; boxes[c * 4 + 1] = y0; boxes[c * 4 + 2] = x1; boxes[c * 4 + 3] = y1;
+  }
+  return boxes;
+}
+
 // Level of detail for far zooms, where hundreds of dots land on one pixel and
 // blending each of them separately is what makes the frame slow.
 //
@@ -196,7 +235,7 @@ function buildLevels(pts) {
       data[j * 3 + 1] = lookup(yTable, sumy[j] / cs[j]);
       data[j * 3 + 2] = cs[j];
     }
-    levels.push({ k: k, n: m, data: data });
+    levels.push({ k: k, n: m, data: data, boxes: chunkBoxes(data, m, 3) });
     if (m < 2000) break;
     ix = cxs.subarray(0, m); iy = cys.subarray(0, m);
     sx0 = sumx; sy0 = sumy; cnt = cs; n = m;

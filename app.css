@@ -9,6 +9,12 @@
   --display: "Bricolage Grotesque", system-ui, sans-serif;
   --mono: "Martian Mono", ui-monospace, monospace;
   --gutter: 20px;
+  /* The page runs under the notch and the home bar (viewport-fit=cover):
+     every edge keeps its gutter clear of them. */
+  --top: calc(var(--gutter) + env(safe-area-inset-top, 0px));
+  --right: calc(var(--gutter) + env(safe-area-inset-right, 0px));
+  --bottom: calc(var(--gutter) + env(safe-area-inset-bottom, 0px));
+  --left: calc(var(--gutter) + env(safe-area-inset-left, 0px));
 }
 
 * { box-sizing: border-box; }
@@ -21,18 +27,26 @@ html, body {
   background: var(--night);
   color: var(--lamp);
   overflow: hidden;
+  overscroll-behavior: none;
   font-family: var(--display);
   -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
-#map { position: absolute; inset: 0; }
+#map { position: absolute; top: 0; right: 0; bottom: 0; left: 0; }
 
 /* Basemap is a plain black background; this only softens MapLibre's canvas
    in case a style layer ever sneaks in. */
 #map .maplibregl-canvas { outline: none; }
 .maplibregl-ctrl-attrib { display: none; }
 
-button { font: inherit; color: inherit; }
+button {
+  font: inherit;
+  color: inherit;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
 
 :focus-visible {
   outline: 1px solid var(--lamp);
@@ -43,8 +57,8 @@ button { font: inherit; color: inherit; }
 
 .masthead {
   position: absolute;
-  top: var(--gutter);
-  left: var(--gutter);
+  top: var(--top);
+  left: var(--left);
   z-index: 10;
   max-width: min(440px, calc(100vw - 2 * var(--gutter)));
   padding: 14px 16px;
@@ -186,8 +200,8 @@ button { font: inherit; color: inherit; }
 
 .picker {
   position: absolute;
-  left: var(--gutter);
-  bottom: var(--gutter);
+  left: var(--left);
+  bottom: var(--bottom);
   z-index: 10;
   padding: 12px;
   background: var(--glass);
@@ -239,9 +253,11 @@ button { font: inherit; color: inherit; }
   transition: background-color 160ms, border-color 160ms, color 160ms;
 }
 
-.tile:hover {
-  border-color: rgba(237, 227, 209, 0.5);
-  color: var(--lamp);
+@media (hover: hover) {
+  .tile:hover {
+    border-color: rgba(237, 227, 209, 0.5);
+    color: var(--lamp);
+  }
 }
 
 .tile[aria-pressed="true"] {
@@ -309,8 +325,8 @@ button { font: inherit; color: inherit; }
 
 .light {
   position: absolute;
-  top: var(--gutter);
-  right: var(--gutter);
+  top: var(--top);
+  right: var(--right);
   z-index: 10;
   display: flex;
   flex-direction: column;
@@ -343,8 +359,11 @@ button { font: inherit; color: inherit; }
   -webkit-backdrop-filter: blur(6px);
 }
 
-.chip:hover,
 .chip[aria-expanded="true"] { border-color: rgba(237, 227, 209, 0.5); }
+
+@media (hover: hover) {
+  .chip:hover { border-color: rgba(237, 227, 209, 0.5); }
+}
 
 .light-panel {
   width: 100%;
@@ -391,7 +410,7 @@ button { font: inherit; color: inherit; }
   --p: 1;
   --thumb: 14px;
   position: absolute;
-  bottom: var(--gutter);
+  bottom: var(--bottom);
   left: 300px;
   right: 130px;
   width: min(780px, calc(100vw - 430px));
@@ -426,9 +445,11 @@ button { font: inherit; color: inherit; }
   transition: background-color 160ms, border-color 160ms, box-shadow 160ms;
 }
 
-.tl-play:hover {
-  border-color: rgba(237, 227, 209, 0.5);
-  background: rgba(var(--ember-raw), 0.4);
+@media (hover: hover) {
+  .tl-play:hover {
+    border-color: rgba(237, 227, 209, 0.5);
+    background: rgba(var(--ember-raw), 0.4);
+  }
 }
 
 .tl-play.on { box-shadow: 0 0 10px rgba(var(--ember-raw), 0.9); }
@@ -491,14 +512,16 @@ button { font: inherit; color: inherit; }
 
 .tl-bars {
   position: absolute;
-  inset: 0 calc(var(--thumb) / 2);
+  top: 0;
+  left: calc(var(--thumb) / 2);
   width: calc(100% - var(--thumb));
   height: 100%;
 }
 
 .tl-slider {
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: 0;
   width: 100%;
   height: 100%;
   margin: 0;
@@ -568,6 +591,7 @@ button { font: inherit; color: inherit; }
   max-width: 520px;
   width: calc(100vw - 2 * var(--gutter));
   max-height: calc(100vh - 2 * var(--gutter));
+  max-height: calc(100dvh - 2 * var(--gutter));
   padding: 28px 28px 22px;
   background: #0b0908;
   color: var(--lamp);
@@ -634,8 +658,8 @@ button { font: inherit; color: inherit; }
 
 .credit {
   position: absolute;
-  right: var(--gutter);
-  bottom: var(--gutter);
+  right: var(--right);
+  bottom: var(--bottom);
   z-index: 10;
   font-family: var(--mono);
   font-size: 9px;
@@ -644,7 +668,20 @@ button { font: inherit; color: inherit; }
   opacity: 0.7;
 }
 
-.credit:hover { color: var(--lamp); opacity: 1; }
+@media (hover: hover) {
+  .credit:hover { color: var(--lamp); opacity: 1; }
+}
+
+/* Touch devices: the glass blur is recomputed every frame over a map that
+   repaints all the time (the twinkle), which a phone GPU pays for in frame
+   rate and battery. A darker glass reads the same without it. */
+@media (max-width: 640px), (pointer: coarse) {
+  :root { --glass: rgba(8, 6, 5, 0.86); }
+  .progress, .picker, .chip, .timeline {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
 
 /* ---------- phones ---------- */
 
@@ -655,11 +692,11 @@ button { font: inherit; color: inherit; }
   .readout { margin-top: 10px; }
 
   .timeline {
-    left: var(--gutter);
-    right: var(--gutter);
     width: auto;
     margin: 0;
-    bottom: calc(var(--gutter) + 44px);
+    left: var(--left);
+    right: var(--right);
+    bottom: calc(var(--bottom) + 44px);
     padding: 10px 12px 6px;
   }
 
@@ -670,7 +707,7 @@ button { font: inherit; color: inherit; }
   .tl-track { height: 44px; }
   .tl-note { display: none; }
 
-  .light { top: auto; bottom: calc(var(--gutter) + 44px + 112px); width: auto; max-width: calc(100vw - 2 * var(--gutter)); }
+  .light { top: auto; bottom: calc(var(--bottom) + 44px + 112px); width: auto; max-width: calc(100vw - 2 * var(--gutter)); }
   .chips { flex-direction: column; align-items: flex-end; }
   #light-toggle { display: block; }
   .light-panel { display: none; width: min(240px, calc(100vw - 2 * var(--gutter))); }
@@ -679,8 +716,8 @@ button { font: inherit; color: inherit; }
   .picker-toggle {
     display: block;
     position: absolute;
-    left: var(--gutter);
-    bottom: var(--gutter);
+    left: var(--left);
+    bottom: var(--bottom);
     z-index: 13;
   }
 

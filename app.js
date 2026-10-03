@@ -90,7 +90,12 @@
   };
 
   var reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  var fmt = function (n) { return n.toLocaleString("pt-BR"); };
+  // Phones and tablets: less memory to keep decoded states in, and a fill
+  // rate that a 3x screen would spend on pixels nobody can tell apart.
+  var lowMemory = (navigator.deviceMemory || 8) <= 4 || window.matchMedia("(pointer: coarse)").matches;
+  var MAX_PIXEL_RATIO = 2;
+  var numberFormat = window.Intl ? new Intl.NumberFormat("pt-BR") : null;
+  var fmt = function (n) { return numberFormat ? numberFormat.format(n) : String(n); };
   var $ = function (id) { return document.getElementById(id); };
 
   function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
@@ -140,7 +145,7 @@
   // Decoded point sets, so going back to a state is instant. Keeps the few
   // most recent; BR stays because it is the home view.
   var cache = new Map();
-  var CACHE_MAX = 4;
+  var CACHE_MAX = lowMemory ? 2 : 4;
 
   function remember(uf, data) {
     cache.delete(uf);
@@ -159,7 +164,7 @@
 
   // Versioned so a cached worker never pairs with a newer app.js (GitHub
   // Pages caches for 10 min). Bump together with the ?v= in index.html.
-  var worker = new Worker("worker.js?v=5");
+  var worker = new Worker("worker.js?v=6");
   var nextId = 0;
   var pending = {};
 
@@ -180,28 +185,48 @@
     if (!p) return;
     if (d.progress !== undefined) { p.onProgress(d.progress); return; }
     delete pending[d.id];
-    if (d.ok) p.resolve({ id: d.id, n: d.n, positions: d.positions, origin: d.origin, q: d.q, years: d.years, hist: d.hist, hasYears: d.hasYears });
+    if (d.ok) p.resolve(d);
     else p.reject(new Error(d.error));
   };
 
+  // The download in flight, so the boot can start it before the map exists and
+  // select() picks it up instead of starting over.
+  var inflight = null;
+
   function loadPoints(uf, onProgress) {
     if (cache.has(uf)) return Promise.resolve(cache.get(uf));
+    if (inflight && inflight.uf === uf) {
+      inflight.onProgress = onProgress;
+      return inflight.promise;
+    }
     // A new request supersedes any in flight (the worker aborts it).
     pending = {};
     var id = ++nextId;
     var url = new URL("data/" + uf.toLowerCase() + ".bin.gz", location.href).href;
-    return new Promise(function (resolve, reject) {
-      pending[id] = { resolve: resolve, reject: reject, onProgress: onProgress };
+    var job = { uf: uf, onProgress: onProgress };
+    job.promise = new Promise(function (resolve, reject) {
+      pending[id] = {
+        resolve: resolve,
+        reject: reject,
+        onProgress: function (f) { if (job.onProgress) job.onProgress(f); },
+      };
       worker.postMessage({ id: id, url: url });
     }).then(function (pts) {
+      if (inflight === job) inflight = null;
       var data = {
         uf: uf, n: pts.n, positions: pts.positions, origin: pts.origin, q: pts.q, levels: [],
-        years: pts.years, hist: pts.hist, hasYears: pts.hasYears,
+        years: pts.years, hist: pts.hist, hasYears: pts.hasYears, boxes: pts.boxes, chunk: pts.chunk,
+        firstYear: null,
       };
       remember(uf, data);
       levelsFor[pts.id] = uf;
       return data;
+    }, function (err) {
+      if (inflight === job) inflight = null;
+      throw err;
     });
+    inflight = job;
+    return job.promise;
   }
 
   // The loader stays up for the whole change of place, flight included, and
@@ -271,6 +296,11 @@
   // slider sets it.
   var TWINKLE_PX = 2;
   var twinkle = 0;
+  // While the camera rests, the twinkle alone asks for a frame only every
+  // TWINKLE_MS: it drifts over seconds, so about 30 fps reads the same and
+  // halves the GPU (and battery) spent on a still map. A moving camera
+  // repaints at full rate anyway.
+  var TWINKLE_MS = 20;
 
   var VS = [
     "attribute vec2 a_pos;",
@@ -295,12 +325,15 @@
     "  if (born <= 0.0) { v_count = 0.0; gl_PointSize = 0.0; gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }",
     "  gl_Position = u_matrix * vec4(a_pos, 0.0, 1.0);",
     "  gl_PointSize = u_size;",
-    // Two unrelated numbers per cell: phase and pace.
-    "  vec2 cell = floor(a_pos / u_cell);",
-    "  float h = hash(cell);",
-    "  float g = hash(cell + 71.3);",
-    "  float w = 2.5 + 4.0 * g;",
-    "  float tw = 1.0 + u_twinkle * sin(u_time * w + 6.2832 * h) * (0.7 + 0.3 * sin(u_time * w * 0.31 + 6.2832 * g));",
+    // Two unrelated numbers per cell: phase and pace. Skipped when off.
+    "  float tw = 1.0;",
+    "  if (u_twinkle > 0.0) {",
+    "    vec2 cell = floor(a_pos / u_cell);",
+    "    float h = hash(cell);",
+    "    float g = hash(cell + 71.3);",
+    "    float w = 2.5 + 4.0 * g;",
+    "    tw += u_twinkle * sin(u_time * w + 6.2832 * h) * (0.7 + 0.3 * sin(u_time * w * 0.31 + 6.2832 * g));",
+    "  }",
     "  v_count = min(a_count, 60000.0) * tw * born;",  // stays finite in mediump; white long before
     "}",
   ].join("\n");
@@ -329,6 +362,61 @@
     var data = null, prev = null;  // prev fades out under data, see lightUp
     var mix = 1;                   // data's share of the light; prev gets 1 - mix
     var params = { alpha: 0.8, gain: 1, radius: BASE_RADIUS, year: TL_MAX - 1900, yearMax: TL_MAX - 1900 };
+    var m = new Float32Array(16);  // the frame's matrix, shifted to a set's origin
+    var twinkleTimer = 0;
+
+    function setup() {
+      prog = gl.createProgram();
+      gl.attachShader(prog, compile(gl.VERTEX_SHADER, VS));
+      gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FS));
+      gl.linkProgram(prog);
+      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+      ["a_pos", "a_count", "a_year"].forEach(function (k) { loc[k] = gl.getAttribLocation(prog, k); });
+      ["u_matrix", "u_size", "u_rgb", "u_light", "u_radius", "u_extent", "u_time", "u_twinkle", "u_cell", "u_year"].forEach(function (k) {
+        loc[k] = gl.getUniformLocation(prog, k);
+      });
+    }
+
+    // Is any of chunk c's box on screen? Its four corners go through the
+    // matrix; the box is off screen when all four fall outside one side of
+    // the view (widened by mx, my in clip units for the dots' own size). The
+    // test holds for corners behind the camera too, and never culls a box
+    // that could show.
+    function boxVisible(b, c, mx, my) {
+      var o = c * 4, left = 0, right = 0, below = 0, above = 0;
+      for (var k = 0; k < 4; k++) {
+        var x = b[o + (k & 1 ? 2 : 0)], y = b[o + (k & 2 ? 3 : 1)];
+        var cx = m[0] * x + m[4] * y + m[12];
+        var cy = m[1] * x + m[5] * y + m[13];
+        var cw = m[3] * x + m[7] * y + m[15];
+        if (cx < -cw * mx) left++;
+        else if (cx > cw * mx) right++;
+        if (cy < -cw * my) below++;
+        else if (cy > cw * my) above++;
+      }
+      return left < 4 && right < 4 && below < 4 && above < 4;
+    }
+
+    // Draws the runs of consecutive chunks that reach the screen.
+    function drawVisible(boxes, chunk, n, mx, my) {
+      if (!boxes) { gl.drawArrays(gl.POINTS, 0, n); return; }
+      var count = boxes.length / 4, run = -1;
+      for (var c = 0; c <= count; c++) {
+        var vis = c < count && boxVisible(boxes, c, mx, my);
+        if (vis && run < 0) run = c;
+        else if (!vis && run >= 0) {
+          var first = run * chunk;
+          gl.drawArrays(gl.POINTS, first, Math.min(n, c * chunk) - first);
+          run = -1;
+        }
+      }
+    }
+
+    function twinkleSoon() {
+      if (twinkleTimer) return;
+      if (map.isMoving()) { map.triggerRepaint(); return; }
+      twinkleTimer = setTimeout(function () { twinkleTimer = 0; map.triggerRepaint(); }, TWINKLE_MS);
+    }
 
     function compile(type, src) {
       var sh = gl.createShader(type);
@@ -371,15 +459,17 @@
 
       onAdd: function (map, context) {
         gl = context;
-        prog = gl.createProgram();
-        gl.attachShader(prog, compile(gl.VERTEX_SHADER, VS));
-        gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FS));
-        gl.linkProgram(prog);
-        if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
-        ["a_pos", "a_count", "a_year"].forEach(function (k) { loc[k] = gl.getAttribLocation(prog, k); });
-        ["u_matrix", "u_size", "u_rgb", "u_light", "u_radius", "u_extent", "u_time", "u_twinkle", "u_cell", "u_year"].forEach(function (k) {
-          loc[k] = gl.getUniformLocation(prog, k);
-        });
+        setup();
+      },
+
+      // The GL context came back after being lost (phones drop it in the
+      // background): every program and buffer is gone, so build them again.
+      // The buffers refill from the cached arrays on the next draw.
+      restore: function () {
+        if (!gl) return;
+        buffers.clear();
+        setup();
+        map.triggerRepaint();
       },
 
       render: function (gl, matrix) {
@@ -387,9 +477,11 @@
         var dpr = map.getPixelRatio ? map.getPixelRatio() : window.devicePixelRatio || 1;
         var R = params.radius, extent = R + 0.5;
         var light = (Math.round(255 * params.alpha) / 255) * params.gain;
+        var size = 2 * extent * dpr;
+        var mx = 1 + size / gl.drawingBufferWidth, my = 1 + size / gl.drawingBufferHeight;
 
         gl.useProgram(prog);
-        gl.uniform1f(loc.u_size, 2 * extent * dpr);
+        gl.uniform1f(loc.u_size, size);
         gl.uniform1f(loc.u_radius, R);
         gl.uniform1f(loc.u_extent, extent);
         gl.uniform1f(loc.u_time, (performance.now() / 1000) % 3600);
@@ -408,11 +500,11 @@
         gl.disableVertexAttribArray(loc.a_pos);
         gl.disableVertexAttribArray(loc.a_count);
         gl.disableVertexAttribArray(loc.a_year);
-        if (twinkle) map.triggerRepaint();
+        if (twinkle) twinkleSoon();
 
         function draw(d, l) {
           // matrix maps Mercator [0,1] to clip space; shift it to d's origin.
-          var ox = d.origin[0], oy = d.origin[1], m = new Float32Array(16);
+          var ox = d.origin[0], oy = d.origin[1];
           for (var i = 0; i < 16; i++) m[i] = matrix[i];
           for (var r = 0; r < 4; r++) m[12 + r] = matrix[r] * ox + matrix[4 + r] * oy + matrix[12 + r];
           // A merged dot cannot say how many of its points existed in a given
@@ -438,7 +530,8 @@
           }
           gl.uniformMatrix4fv(loc.u_matrix, false, m);
           gl.uniform1f(loc.u_light, l);
-          gl.drawArrays(gl.POINTS, 0, level ? level.n : d.n);
+          if (level) drawVisible(level.boxes, d.chunk, level.n, mx, my);
+          else drawVisible(d.boxes, d.chunk, d.n, mx, my);
         }
       },
 
@@ -678,15 +771,17 @@
   var PLAY_SECONDS = 14;   // a full run, from the first lit year to TL_MAX
 
   function tlFirstYear(d) {
+    if (d.firstYear !== null) return d.firstYear;
     // First year holding at least 0.5% of the points: the empty decades
     // before it would be dead air in a playback.
     var total = 0, acc = 0, y;
+    d.firstYear = TL_MIN;
     for (y = 0; y < 256; y++) total += d.hist[y];
     for (y = 0; y < 256; y++) {
       acc += d.hist[y];
-      if (acc >= total * 0.005) return clamp(y + TL_MIN, TL_MIN, TL_MAX - 1);
+      if (acc >= total * 0.005) { d.firstYear = clamp(y + TL_MIN, TL_MIN, TL_MAX - 1); break; }
     }
-    return TL_MIN;
+    return d.firstYear;
   }
 
   function tlDrawBars() {
@@ -960,10 +1055,14 @@
     var c = map.getContainer();
     return Math.log2(Math.min(c.clientWidth, c.clientHeight) / REF_SIDE);
   }
+  function hashUf() {
+    var uf = location.hash.replace("#", "").split("/")[0].toUpperCase();
+    return meta[uf] ? uf : "BR";
+  }
+
   function fromHash() {
     var parts = location.hash.replace("#", "").split("/");
-    var uf = parts[0].toUpperCase();
-    if (!meta[uf]) uf = "BR";
+    var uf = hashUf();
     var n = parts.slice(1).map(Number);
     if (n.length < 3 || n.slice(0, 3).some(isNaN)) return { uf: uf, view: null, knobs: null, twinkle: null, year: null };
     var knobs = n.length >= 8 && !n.slice(5, 8).some(isNaN) ? {
@@ -1141,7 +1240,18 @@
       map.easeTo({ pitch: tilted ? TILT : 0, bearing: tilted ? map.getBearing() : 0, duration: reduceMotion ? 0 : 900 });
     });
 
-    $("about-open").addEventListener("click", function () { $("about").showModal(); });
+    $("about-open").addEventListener("click", function () {
+      var about = $("about");
+      // <dialog> came late to Safari (15.4): there, just show it.
+      if (about.showModal) about.showModal();
+      else about.setAttribute("open", "");
+    });
+    if (!$("about").showModal) {
+      $("about").querySelector("form").addEventListener("submit", function (e) {
+        e.preventDefault();
+        $("about").removeAttribute("open");
+      });
+    }
 
     document.addEventListener("keydown", function (e) {
       if (e.key === "Escape") {
@@ -1172,6 +1282,10 @@
           .reduce(function (a, k) { return a + m[k].n_points; }, 0);
         $("sum-points").textContent = fmt(sum);
 
+        // Start the first place's download now, while the map sets up;
+        // select() picks it up when the map is ready.
+        loadPoints(hashUf()).catch(function () { /* select() reports it */ });
+
         buildTiles();
         wireUi();
         loadUfGrid();
@@ -1188,7 +1302,13 @@
           pitch: TILT,
           antialias: false, // the dots antialias themselves; MSAA only costs fill
           attributionControl: false,
+          // No labels to fade in. With a fade, MapLibre keeps repainting at
+          // full rate while anything (the twinkle) renders every < 300 ms.
+          fadeDuration: 0,
+          pixelRatio: Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO),
         });
+
+        map.on("webglcontextrestored", function () { if (points) points.restore(); });
 
         map.on("load", function () {
           points = createPointsLayer();
