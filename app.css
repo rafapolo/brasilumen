@@ -62,8 +62,11 @@ button {
   z-index: 10;
   max-width: min(440px, calc(100vw - 2 * var(--gutter)));
   padding: 14px 16px;
-  background: rgba(0, 0, 0, 0.82);
-  border-radius: 6px;
+  background: var(--glass);
+  border: 1px solid var(--hair);
+  border-radius: 4px;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   pointer-events: none;
 }
 
@@ -368,8 +371,11 @@ button {
 .light-panel {
   width: 100%;
   padding: 12px 14px 10px;
-  background: rgba(0, 0, 0, 0.55);
-  border-radius: 6px;
+  background: var(--glass);
+  border: 1px solid var(--hair);
+  border-radius: 4px;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
 }
 
 .knob {
@@ -677,7 +683,7 @@ button {
    rate and battery. A darker glass reads the same without it. */
 @media (max-width: 640px), (pointer: coarse) {
   :root { --glass: rgba(8, 6, 5, 0.86); }
-  .progress, .picker, .chip, .timeline {
+  .progress, .masthead, .light-panel, .picker, .chip, .timeline {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
