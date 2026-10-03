@@ -58,13 +58,13 @@
   ];
 
   // brilho has its own curve, independent of light: nearly off from afar
-  // (<= 4), waking through the state view (7) and at least 2 from 8 down.
+  // (<= 4), waking through the state view (7) and at least 1.4 from 8 down.
   // opacidade still follows light (capped at 1).
   var BRIGHT_KEYS = [
-    { z: 4, v: 0.04 },
-    { z: 7, v: 0.6 },
-    { z: 8, v: 2.0 },
-    { z: 15, v: 2.5 },
+    { z: 4, v: 0.03 },
+    { z: 7, v: 0.42 },
+    { z: 8, v: 1.4 },
+    { z: 15, v: 1.75 },
   ];
 
   var NAMES = {
@@ -77,16 +77,18 @@
     SE: "Sergipe", TO: "Tocantins",
   };
 
-  // [column, row] in a 7x8 grid, roughly where each state sits on the map.
+  // [column, row, rows tall] in a 7x8 grid, roughly where each state sits on
+  // the map. BA takes two rows so SE (north of its coast) and ES (south of it)
+  // can both touch it without touching each other.
   var TILE_GRID = {
     RR: [1, 0], AP: [3, 0],
     AM: [1, 1], PA: [2, 1], MA: [3, 1], CE: [4, 1], RN: [5, 1],
     AC: [0, 2], RO: [1, 2], MT: [2, 2], TO: [3, 2], PI: [4, 2], PE: [5, 2], PB: [6, 2],
-    GO: [3, 3], DF: [4, 3], BA: [5, 3], AL: [6, 3],
-    MS: [2, 4], SP: [3, 4], MG: [4, 4], ES: [5, 4], SE: [6, 4],
-    PR: [3, 5], RJ: [4, 5],
-    SC: [3, 6],
-    RS: [2, 7],
+    MS: [2, 3], GO: [3, 3], BA: [4, 3, 2], AL: [5, 3],
+    DF: [3, 4], SE: [5, 4],
+    SP: [2, 5], MG: [3, 5], ES: [4, 5],
+    PR: [2, 6], RJ: [3, 6],
+    RS: [1, 7], SC: [2, 7],
   };
 
   var reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -1144,7 +1146,7 @@
       b.textContent = uf;
       b.dataset.uf = uf;
       b.style.gridColumn = pos[0] + 1;
-      b.style.gridRow = pos[1] + 1;
+      b.style.gridRow = (pos[1] + 1) + (pos[2] ? " / span " + pos[2] : "");
       var info = meta[uf];
       if (info) {
         var g = (Math.log(info.n_estab_geolocalizados) - lo) / (hi - lo || 1);
